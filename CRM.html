@@ -1691,6 +1691,10 @@ function shareWithData(){
   toast('📦 File taiyaar ho rahi hai...');
   setTimeout(async ()=>{
     try{
+      // ── Declare data variables FIRST — before any usage ──
+      const leadsJSON    = JSON.stringify(leads);
+      const commentsJSON = JSON.stringify(comments);
+
       // ── Get original HTML source ──
       let src = '';
       try {
@@ -1748,9 +1752,6 @@ var EMBEDDED_COMMENTS = ${commentsJSON};
         if(html[i]===';') i++;
         return html.slice(0, idx) + marker + newValue + ';\n' + html.slice(i);
       }
-
-      const leadsJSON    = JSON.stringify(leads);
-      const commentsJSON = JSON.stringify(comments);
 
       // 1. Replace INITIAL_LEADS
       const r1 = replaceVar(src, 'INITIAL_LEADS', leadsJSON);
