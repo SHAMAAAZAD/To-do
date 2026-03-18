@@ -121,9 +121,9 @@ html,body{height:100%;font-family:'Nunito',sans-serif;background:var(--bg);color
 .threedot-sep{border:none;border-top:.5px solid var(--border);margin:4px 0;}
 
 /* TABNAV */
-.tabnav{background:white;border-bottom:1px solid var(--border);display:flex;padding:0 16px;gap:0;flex-shrink:0;overflow-x:auto;}
+.tabnav{background:white;border-bottom:1px solid var(--border);display:flex;padding:0 8px;gap:0;flex-shrink:0;align-items:center;}
 .tabnav::-webkit-scrollbar{height:0;}
-.ti{padding:11px 15px;font-size:13px;font-weight:700;color:var(--muted);cursor:pointer;border-bottom:2.5px solid transparent;white-space:nowrap;display:flex;align-items:center;gap:6px;transition:.15s;font-family:inherit;}
+.ti{padding:11px 15px;font-size:13px;font-weight:700;color:var(--muted);cursor:pointer;border-bottom:2.5px solid transparent;white-space:nowrap;display:flex;align-items:center;gap:6px;transition:.15s;font-family:inherit;background:none;border-top:none;border-left:none;border-right:none;}
 .ti.active{color:var(--p);border-bottom-color:var(--p);}
 .ti:hover:not(.active){color:var(--text);}
 .tbadge{font-size:10px;padding:2px 6px;border-radius:10px;font-weight:800;}
@@ -132,6 +132,25 @@ html,body{height:100%;font-family:'Nunito',sans-serif;background:var(--bg);color
 .tbadge.b2{background:#DCFCE7;color:#166534;}
 .tbadge.b3{background:#FEE2E2;color:#991B1B;}
 .tbadge.b4{background:#F3E8FF;color:#5B21B6;}
+/* Notification button */
+.notif-btn{position:relative;background:none;border:none;font-size:18px;cursor:pointer;padding:8px 10px;border-radius:8px;color:var(--muted);transition:.15s;font-family:inherit;}
+.notif-btn:hover{background:var(--pl);color:var(--p);}
+.notif-badge{position:absolute;top:4px;right:4px;background:var(--r);color:white;font-size:9px;font-weight:900;padding:1px 4px;border-radius:10px;min-width:14px;text-align:center;}
+/* Filter popup */
+.fpop-item{display:flex;align-items:center;justify-content:space-between;padding:12px 20px;cursor:pointer;font-size:14px;font-weight:700;color:var(--text);transition:.1s;}
+.fpop-item:hover{background:var(--pl);}
+.fpop-item.active{color:var(--p);background:var(--pl);}
+.fpop-cnt{font-size:12px;font-weight:800;padding:2px 8px;border-radius:20px;background:var(--bg);}
+/* Reminder items */
+.rem-item{background:white;border:1.5px solid var(--border);border-radius:12px;padding:12px 14px;margin-bottom:8px;position:relative;}
+.rem-item.overdue{border-color:var(--r);background:#FFF5F5;}
+.rem-item.upcoming{border-color:var(--w);background:#FFFBEB;}
+.rem-item.done{border-color:var(--g);background:#F0FDF4;opacity:.7;}
+.rem-del{position:absolute;top:8px;right:8px;background:none;border:none;cursor:pointer;font-size:14px;color:var(--muted);padding:2px 5px;border-radius:4px;}
+.rem-del:hover{color:var(--r);background:var(--rl);}
+/* Lead search results */
+.rem-lead-item{padding:8px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border);}
+.rem-lead-item:hover{background:var(--pl);color:var(--p);}
 
 /* VIEWS */
 .main{flex:1;overflow:hidden;display:flex;flex-direction:column;}
@@ -380,11 +399,83 @@ tr.rInvalidNumber:hover{background:#FFE4E6;}
 </div>
 
 <div class="tabnav" id="tabnav">
-  <div class="ti active" onclick="sw('all',this)">📋 Sabhi Leads <span class="tbadge b4" id="tb5">0</span></div>
-  <div class="ti" onclick="sw('followup',this)">🔔 Follow Up <span class="tbadge b1" id="tb1">0</span></div>
-  <div class="ti" onclick="sw('demand',this)">💰 Demand Paid <span class="tbadge b2" id="tb2">0</span></div>
-  <div class="ti" onclick="sw('cnp',this)">📵 CNP <span class="tbadge b3" id="tb3">0</span></div>
-  <div class="ti" onclick="sw('newleads',this)">🆕 New Leads <span class="tbadge b0" id="tb4">0</span></div>
+  <div class="ti active" id="mainTabBtn" onclick="openFilterPopup(event)">
+    <span id="mainTabLabel">📋 Sabhi Leads</span>
+    <span class="tbadge b4" id="tb5">0</span>
+    <span style="font-size:10px;margin-left:2px;opacity:.7">▼</span>
+  </div>
+  <div style="flex:1"></div>
+  <button class="notif-btn" id="notifBtn" onclick="openNotifPanel()" title="Reminders">
+    🔔 <span class="notif-badge" id="notifBadge" style="display:none">0</span>
+  </button>
+</div>
+
+<!-- FILTER POPUP -->
+<div id="filterPopupBg" onclick="if(event.target===this)closeFilterPopup()" style="display:none;position:fixed;inset:0;z-index:500;background:rgba(0,0,0,.3)">
+  <div id="filterPopup" style="position:absolute;top:52px;left:0;right:0;background:white;border-radius:0 0 16px 16px;box-shadow:0 8px 32px rgba(0,0,0,.18);padding:8px 0;max-height:70vh;overflow-y:auto">
+    <div style="padding:8px 16px 4px;font-size:10px;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Filter by Status</div>
+    <div class="fpop-item active" id="fpop-all" onclick="fpopSelect('all')">
+      <span>📋 Sabhi Leads</span><span class="fpop-cnt" id="fpop-cnt-all">0</span>
+    </div>
+    <div class="fpop-item" id="fpop-followup" onclick="fpopSelect('followup')">
+      <span>🔔 Follow Up</span><span class="fpop-cnt" id="fpop-cnt-followup">0</span>
+    </div>
+    <div class="fpop-item" id="fpop-demand" onclick="fpopSelect('demand')">
+      <span>💰 Demand Paid</span><span class="fpop-cnt" id="fpop-cnt-demand">0</span>
+    </div>
+    <div class="fpop-item" id="fpop-cnp" onclick="fpopSelect('cnp')">
+      <span>📵 CNP</span><span class="fpop-cnt" id="fpop-cnt-cnp">0</span>
+    </div>
+    <div class="fpop-item" id="fpop-newleads" onclick="fpopSelect('newleads')">
+      <span>🆕 New Leads</span><span class="fpop-cnt" id="fpop-cnt-newleads">0</span>
+    </div>
+    <div id="fpop-extra-statuses"></div>
+  </div>
+</div>
+
+<!-- NOTIFICATION PANEL -->
+<div id="notifPanelBg" onclick="if(event.target===this)closeNotifPanel()" style="display:none;position:fixed;inset:0;z-index:600;background:rgba(0,0,0,.4)">
+  <div id="notifPanel" style="position:absolute;top:0;right:0;bottom:0;width:min(360px,100vw);background:white;box-shadow:-4px 0 24px rgba(0,0,0,.2);display:flex;flex-direction:column">
+    <div style="background:linear-gradient(135deg,#1E40AF,#7C3AED);color:white;padding:16px 18px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0">
+      <div style="font-size:16px;font-weight:900">🔔 Reminders</div>
+      <button onclick="closeNotifPanel()" style="background:rgba(255,255,255,.2);border:none;color:white;width:30px;height:30px;border-radius:50%;cursor:pointer;font-size:16px">✕</button>
+    </div>
+    <div style="padding:10px 14px;border-bottom:1px solid var(--border);background:#F8FAFC">
+      <button onclick="openAddReminder()" style="width:100%;background:linear-gradient(135deg,#2563EB,#7C3AED);color:white;border:none;border-radius:10px;padding:10px;font-size:13px;font-weight:800;cursor:pointer;font-family:inherit">+ Naya Reminder Set Karo</button>
+    </div>
+    <div style="flex:1;overflow-y:auto;padding:10px 14px" id="notifList"></div>
+  </div>
+</div>
+
+<!-- ADD REMINDER MODAL -->
+<div class="mbg" id="addReminderMbg" onclick="if(event.target===this)closeAddReminder()">
+  <div class="modal" style="max-width:400px">
+    <div class="mhd"><h2>⏰ Reminder Set Karo</h2><button class="mcl" onclick="closeAddReminder()">✕</button></div>
+    <div class="mbd">
+      <div class="fg">
+        <label class="fl">Customer Select Karo</label>
+        <input class="finp" id="remLeadSearch" placeholder="Naam ya phone dhundho..." oninput="searchReminderLeads()" autocomplete="off">
+        <div id="remLeadResults" style="max-height:160px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;margin-top:4px;display:none"></div>
+        <div id="remSelectedLead" style="margin-top:6px;font-size:13px;font-weight:700;color:var(--p)"></div>
+      </div>
+      <div class="fg">
+        <label class="fl">Reminder Date</label>
+        <input class="finp" id="remDate" type="date" value="">
+      </div>
+      <div class="fg">
+        <label class="fl">Reminder Time</label>
+        <input class="finp" id="remTime" type="time" value="">
+      </div>
+      <div class="fg">
+        <label class="fl">Note (optional)</label>
+        <input class="finp" id="remNote" placeholder="Call karna hai, documents lene hain...">
+      </div>
+    </div>
+    <div class="mft">
+      <button class="btn-sec" onclick="closeAddReminder()">Cancel</button>
+      <button class="btn-pri" onclick="saveReminder()">⏰ Set Reminder</button>
+    </div>
+  </div>
 </div>
 
 <div class="main">
@@ -707,6 +798,8 @@ let syncStatus = 'idle';
 let _syncTimer = null;
 let _realtimePoller = null;
 let _lastSyncHash = '';
+// Unique device ID to avoid echo updates
+const _deviceId = localStorage.getItem('crm_device_id') || (()=>{const id='dev_'+Math.random().toString(36).slice(2);localStorage.setItem('crm_device_id',id);return id;})();
 
 const FB_KEY_LS = 'crm_firebase_config';
 
@@ -740,40 +833,37 @@ async function syncPush(){
   if(!syncEnabled||!FB_URL) return;
   setSyncStatus('syncing');
   try{
-    const payload = {
-      leads: leads,
-      comments: comments,
-      updatedAt: Date.now()
-    };
+    const ts = Date.now();
+    const payload = { leads, comments, updatedAt: ts, deviceId: _deviceId };
     const r = await fetch(fbEndpoint('crmdata'), {
       method: 'PUT',
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify(payload)
     });
     if(r.ok){
-      _lastSyncHash = payload.updatedAt.toString();
+      _lastSyncHash = ts.toString();
       setSyncStatus('ok', leads.length+' leads ✓');
-    } else {
-      setSyncStatus('error','Push failed '+r.status);
-    }
+    } else { setSyncStatus('error','Push failed '+r.status); }
   }catch(e){ setSyncStatus('error', e.message); }
 }
 
 // Pull data from Firebase
 async function syncPull(){
   if(!syncEnabled||!FB_URL) return false;
-  setSyncStatus('syncing','Loading...');
+  setSyncStatus('syncing','...');
   try{
     const r = await fetch(fbEndpoint('crmdata'));
     if(!r.ok){ setSyncStatus('error','Pull failed '+r.status); return false; }
     const data = await r.json();
-    if(!data||!data.leads||!Array.isArray(data.leads)){ setSyncStatus('error','No data'); return false; }
-    // Only update if remote data is different
-    if(data.updatedAt && data.updatedAt.toString()===_lastSyncHash){ setSyncStatus('ok',data.leads.length+' leads ✓'); return false; }
+    if(!data||!data.leads||!Array.isArray(data.leads)){ setSyncStatus('idle',''); return false; }
+    const remoteTs = data.updatedAt ? data.updatedAt.toString() : '';
+    // Skip if same timestamp or came from this device
+    if(remoteTs === _lastSyncHash){ setSyncStatus('ok', data.leads.length+' leads ✓'); return false; }
+    if(data.deviceId === _deviceId){ setSyncStatus('ok', data.leads.length+' leads ✓'); return false; }
     leads = data.leads;
     comments = data.comments||{};
     saveLeads(); saveComments();
-    _lastSyncHash = data.updatedAt ? data.updatedAt.toString() : '';
+    _lastSyncHash = remoteTs;
     setSyncStatus('ok', leads.length+' leads ✓');
     return true;
   }catch(e){ setSyncStatus('error', e.message); return false; }
@@ -785,19 +875,17 @@ function startRealtimeSync(){
   if(!syncEnabled||!FB_URL) return;
   setSyncStatus('ok','Live 🟢');
   _realtimePoller = setInterval(async()=>{
-    // Only poll if tab is visible
     if(document.hidden) return;
     try{
       const r = await fetch(fbEndpoint('crmdata/updatedAt'));
       if(!r.ok) return;
       const ts = await r.json();
       if(ts && ts.toString() !== _lastSyncHash){
-        // Remote changed — pull full data
         const pulled = await syncPull();
-        if(pulled){ refreshAll(); toast('🔄 New data sync ho gaya!',2000); }
+        if(pulled){ refreshAll(); }
       }
     }catch(e){}
-  }, 8000);
+  }, 3000); // Check every 3 seconds
 }
 
 function stopRealtimeSync(){
@@ -1291,23 +1379,95 @@ function toggleStats(){
 }
 // TAB SWITCH
 let curTab='all';
+let curFilter='all'; // current filter: 'all','followup','demand','cnp','newleads'
+
 function sw(id,el){
-  document.querySelectorAll('.ti').forEach(t=>t.classList.remove('active'));el.classList.add('active');
+  // Legacy — now just show all view with filter
+  fpopSelect(id === 'all' ? 'all' : id);
+}
+
+// Filter popup
+function openFilterPopup(e){
+  e.stopPropagation();
+  const fp = document.getElementById('filterPopupBg');
+  fp.style.display = 'flex';
+  // Update counts
+  const cnt={};leads.forEach(l=>{cnt[l.Status]=(cnt[l.Status]||0)+1;});
+  document.getElementById('fpop-cnt-all').textContent = leads.length;
+  document.getElementById('fpop-cnt-followup').textContent = cnt['Follow Up']||0;
+  document.getElementById('fpop-cnt-demand').textContent = cnt['Demand Paid']||0;
+  document.getElementById('fpop-cnt-cnp').textContent = cnt['CNP']||0;
+  document.getElementById('fpop-cnt-newleads').textContent = cnt['New']||0;
+  // Extra statuses
+  const known=['Follow Up','Demand Paid','CNP','New'];
+  const extra = listStats.filter(s=>!known.includes(s));
+  document.getElementById('fpop-extra-statuses').innerHTML = extra.length ?
+    '<div style="padding:8px 16px 4px;font-size:10px;font-weight:800;color:var(--muted);text-transform:uppercase">Other Status</div>' +
+    extra.map(s=>{
+      const c=getStatusColor(s);
+      return `<div class="fpop-item" onclick="fpopSelectStatus('${s.replace(/'/g,"\\'")}')">
+        <span><span class="badge" style="background:${c.bg};color:${c.text};margin-right:6px">${s}</span></span>
+        <span class="fpop-cnt">${cnt[s]||0}</span>
+      </div>`;
+    }).join('') : '';
+  // Highlight active
+  document.querySelectorAll('.fpop-item').forEach(i=>i.classList.remove('active'));
+  const activeEl = document.getElementById('fpop-'+curFilter);
+  if(activeEl) activeEl.classList.add('active');
+}
+function closeFilterPopup(){ document.getElementById('filterPopupBg').style.display='none'; }
+document.addEventListener('click',()=>{ const f=document.getElementById('filterPopupBg'); if(f)f.style.display='none'; });
+
+function fpopSelect(filterId){
+  closeFilterPopup();
+  curFilter = filterId;
+  curTab = 'all';
+  // Show only the 'all' view
   document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
-  document.getElementById('view-'+id).classList.add('active');
-  curTab=id;
-  if(id==='dashboard')rdash();
-  else renderTab(id);
+  document.getElementById('view-all').classList.add('active');
+  // Update label
+  const labels = {all:'📋 Sabhi Leads',followup:'🔔 Follow Up',demand:'💰 Demand Paid',cnp:'📵 CNP',newleads:'🆕 New Leads'};
+  document.getElementById('mainTabLabel').textContent = labels[filterId]||'📋 Sabhi Leads';
+  renderFilteredAll();
+}
+
+function fpopSelectStatus(status){
+  closeFilterPopup();
+  curFilter = 'status:'+status;
+  curTab = 'all';
+  document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
+  document.getElementById('view-all').classList.add('active');
+  const c = getStatusColor(status);
+  document.getElementById('mainTabLabel').textContent = status;
+  renderFilteredAll();
+}
+
+function renderFilteredAll(){
+  // Use existing renderTab but override status filter
+  renderTab('all');
+}
+
+// Override getStatusFilter for 'all' tab based on curFilter
+function getStatusFilter(tab){
+  if(tab!=='all') return {followup:'Follow Up',demand:'Demand Paid',cnp:'CNP',newleads:'New'}[tab]||null;
+  if(curFilter==='all') return null;
+  if(curFilter==='followup') return 'Follow Up';
+  if(curFilter==='demand') return 'Demand Paid';
+  if(curFilter==='cnp') return 'CNP';
+  if(curFilter==='newleads') return 'New';
+  if(curFilter.startsWith('status:')) return curFilter.slice(7);
+  return null;
 }
 
 // RENDER DASHBOARD
 function rdash(){
   const cnt={};leads.forEach(l=>{cnt[l.Status]=(cnt[l.Status]||0)+1;});
   const fu=cnt['Follow Up']||0, dp=cnt['Demand Paid']||0, cnp=cnt['CNP']||0, nl=cnt['New']||0;
-  document.getElementById('tb1').textContent=fu;
-  document.getElementById('tb2').textContent=dp;
-  document.getElementById('tb3').textContent=cnp;
-  document.getElementById('tb4').textContent=nl;
+  // Update tb badges (still used in filter popup)
+  const t1=document.getElementById('tb1'); if(t1)t1.textContent=fu;
+  const t2=document.getElementById('tb2'); if(t2)t2.textContent=dp;
+  const t3=document.getElementById('tb3'); if(t3)t3.textContent=cnp;
+  const t4=document.getElementById('tb4'); if(t4)t4.textContent=nl;
   document.getElementById('tb5').textContent=leads.length;
 
   document.getElementById('sgrid').innerHTML=`
@@ -2042,9 +2202,9 @@ function doImport(mode){
 // ===========================
 // TOAST
 // ===========================
-function toast(msg){
+function toast(msg, dur=2800){
   const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');
-  clearTimeout(toast._t);toast._t=setTimeout(()=>t.classList.remove('show'),2800);
+  clearTimeout(toast._t);toast._t=setTimeout(()=>t.classList.remove('show'),dur);
 }
 
 // ===========================
@@ -2166,21 +2326,24 @@ function saveSetEdit(type, idx){
 
 function addSetItem(type){
   const inp = document.getElementById(`set-${type}-inp`);
+  if(!inp){ console.error('Input not found: set-'+type+'-inp'); return; }
   const val = inp.value.trim();
   if(!val){ inp.focus(); return; }
 
-  let arr;
-  if(type==='proj') arr=listProjs;
-  else if(type==='ref') arr=listRefs;
-  else arr=listStats;
+  let arr, base;
+  if(type==='proj'){ arr=listProjs; base=LS_PROJS; }
+  else if(type==='ref'){ arr=listRefs; base=LS_REFS; }
+  else { arr=listStats; base=LS_STATLIST; }
 
   if(arr.includes(val)){ toast('Yeh pehle se exist karta hai!'); inp.select(); return; }
+  
   arr.push(val);
-  const base = type==='proj'?LS_PROJS:type==='ref'?LS_REFS:LS_STATLIST;
   saveList(base, arr);
   inp.value='';
   renderSetLists();
   rebuildDropdowns();
+  // Also refresh current tab so new item appears in filter dropdowns
+  if(curTab && curTab!=='dashboard') renderTab(curTab);
   toast(`✅ "${val}" add ho gaya!`);
   inp.focus();
 }
@@ -2615,16 +2778,259 @@ async function startApp(){
 
   rdash();
   renderTab('all');
+  loadReminders();
+  updateReminderBadge();
+  startReminderChecker();
 
   // Start real-time sync if Firebase configured
   if(syncEnabled && FB_URL){
-    // First pull latest data from cloud
     syncPull().then(pulled => {
       if(pulled){ refreshAll(); }
       startRealtimeSync();
       setSyncStatus('ok', leads.length+' leads ✓');
     });
   }
+}
+
+// ===========================
+// REMINDER SYSTEM
+// ===========================
+const REM_KEY = 'crm_reminders_v1';
+let reminders = [];
+let _remTimer = null;
+let _remSelectedSr = null;
+let _alertedKeys = new Set(); // track already alerted reminders this session
+
+function loadReminders(){
+  try{ const d=localStorage.getItem(REM_KEY); reminders=d?JSON.parse(d):[]; }catch(e){ reminders=[]; }
+}
+function saveReminders(){
+  try{ localStorage.setItem(REM_KEY, JSON.stringify(reminders)); }catch(e){}
+}
+
+// Get today's leads that have followup time set — auto reminders
+function getTodayLeadReminders(){
+  const todayStr = new Date().toISOString().slice(0,10);
+  return leads
+    .filter(l => l.Followup_Date === todayStr && l.Followup_Time)
+    .map(l => ({
+      type: 'auto',
+      sr: l.Sr,
+      leadName: l.Name,
+      datetime: todayStr + 'T' + l.Followup_Time,
+      note: l.Notes || '',
+      phone: l.Phone || ''
+    }));
+}
+
+// Combine auto (from leads) + manual reminders
+function getAllReminders(){
+  loadReminders();
+  const autoRems = getTodayLeadReminders();
+  // Merge: manual first, then auto (avoid duplicates by Sr)
+  const manualSrs = new Set(reminders.filter(r=>r.sr).map(r=>r.sr));
+  const uniqueAuto = autoRems.filter(r => !manualSrs.has(r.sr));
+  return [...reminders, ...uniqueAuto];
+}
+
+function openNotifPanel(){
+  renderNotifList();
+  document.getElementById('notifPanelBg').style.display='flex';
+}
+function closeNotifPanel(){ document.getElementById('notifPanelBg').style.display='none'; }
+
+function renderNotifList(){
+  const now = new Date();
+  const todayStr = now.toISOString().slice(0,10);
+  const all = getAllReminders().sort((a,b)=>new Date(a.datetime)-new Date(b.datetime));
+
+  // Separate: overdue, upcoming (within 2 hrs), future, no-time
+  const overdue   = all.filter(r=>new Date(r.datetime)<now);
+  const soon      = all.filter(r=>{ const d=new Date(r.datetime)-now; return d>=0&&d<=2*3600*1000; });
+  const future    = all.filter(r=>new Date(r.datetime)-now>2*3600*1000);
+
+  function remCard(r, idx, isAuto){
+    const dt = new Date(r.datetime);
+    const diff = dt - now;
+    const isPast = diff < 0;
+    const isSoon = diff>=0 && diff<=15*60*1000;
+    const cls = isPast ? 'overdue' : isSoon ? 'upcoming' : '';
+    const icon = isPast ? '🔴' : isSoon ? '🟡' : '🟢';
+    const lead = leads.find(l=>l.Sr===r.sr);
+    const name = (lead?lead.Name:r.leadName)||'—';
+    const phone = (lead?lead.Phone:r.phone)||'';
+    const timeStr = dt.toLocaleTimeString('hi-IN',{hour:'2-digit',minute:'2-digit',hour12:true});
+    const diffStr = isPast
+      ? `${Math.round(-diff/60000)} min pehle`
+      : diff<3600000 ? `${Math.round(diff/60000)} min mein`
+      : `${Math.round(diff/3600000)}h ${Math.round((diff%3600000)/60000)}m mein`;
+    const delBtn = isAuto
+      ? '' // auto reminders can't be deleted here
+      : `<button class="rem-del" onclick="deleteReminder(${idx})">🗑️</button>`;
+    const autoTag = isAuto ? `<span style="font-size:9px;background:#DBEAFE;color:#1D4ED8;padding:1px 5px;border-radius:8px;font-weight:800;margin-left:4px">AUTO</span>` : '';
+    return `<div class="rem-item ${cls}">
+      ${delBtn}
+      <div style="font-size:11px;font-weight:900;color:var(--muted);margin-bottom:3px">${icon} ⏰ ${timeStr} · ${diffStr} ${autoTag}</div>
+      <div style="font-size:14px;font-weight:800;color:var(--text)">${name}</div>
+      ${phone?`<div style="font-size:12px;color:var(--p);font-weight:700">📱 ${phone}</div>`:''}
+      ${r.note?`<div style="font-size:11px;color:var(--slate);margin-top:2px">📝 ${r.note}</div>`:''}
+      <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
+        ${lead?`<button onclick="closeNotifPanel();openProfile(${r.sr})" style="background:var(--pl);color:var(--p);border:none;border-radius:8px;padding:4px 10px;font-size:11px;font-weight:700;cursor:pointer">👤 Profile</button>`:''}
+        ${phone?`<button onclick="openPhonePopup('${phone}','${name}',event)" style="background:#DCFCE7;color:#166534;border:none;border-radius:8px;padding:4px 10px;font-size:11px;font-weight:700;cursor:pointer">📞 Call</button>`:''}
+      </div>
+    </div>`;
+  }
+
+  let html = '';
+
+  if(!all.length){
+    html = '<div style="text-align:center;padding:40px;color:var(--muted);font-size:13px">Aaj koi reminder nahi.<br>Lead mein follow-up time set karo ya + button dabao!</div>';
+  } else {
+    if(overdue.length){
+      html += `<div style="font-size:10px;font-weight:900;color:var(--r);text-transform:uppercase;letter-spacing:.5px;padding:4px 0 6px">🔴 Overdue (${overdue.length})</div>`;
+      // Map to original index for delete
+      overdue.forEach(r=>{
+        const idx = reminders.indexOf(r);
+        html += remCard(r, idx, r.type==='auto');
+      });
+    }
+    if(soon.length){
+      html += `<div style="font-size:10px;font-weight:900;color:var(--w);text-transform:uppercase;letter-spacing:.5px;padding:8px 0 6px">🟡 Aaj upcoming (${soon.length})</div>`;
+      soon.forEach(r=>{
+        const idx = reminders.indexOf(r);
+        html += remCard(r, idx, r.type==='auto');
+      });
+    }
+    if(future.length){
+      html += `<div style="font-size:10px;font-weight:900;color:var(--g);text-transform:uppercase;letter-spacing:.5px;padding:8px 0 6px">🟢 Baad mein (${future.length})</div>`;
+      future.forEach(r=>{
+        const idx = reminders.indexOf(r);
+        html += remCard(r, idx, r.type==='auto');
+      });
+    }
+  }
+
+  document.getElementById('notifList').innerHTML = html;
+  updateReminderBadge();
+}
+
+function openAddReminder(sr){
+  _remSelectedSr = sr||null;
+  document.getElementById('remLeadSearch').value='';
+  document.getElementById('remLeadResults').style.display='none';
+  document.getElementById('remLeadResults').innerHTML='';
+  document.getElementById('remDate').value=new Date().toISOString().slice(0,10);
+  document.getElementById('remTime').value='';
+  document.getElementById('remNote').value='';
+  if(sr){
+    const l=leads.find(x=>x.Sr===sr);
+    if(l){ document.getElementById('remSelectedLead').textContent='✅ '+l.Name+' ('+l.Phone+')'; }
+  } else {
+    document.getElementById('remSelectedLead').textContent='';
+  }
+  document.getElementById('addReminderMbg').classList.add('show');
+}
+function closeAddReminder(){ document.getElementById('addReminderMbg').classList.remove('show'); }
+
+function searchReminderLeads(){
+  const q = document.getElementById('remLeadSearch').value.toLowerCase();
+  if(!q){ document.getElementById('remLeadResults').style.display='none'; return; }
+  const matches = leads.filter(l=>(l.Name||'').toLowerCase().includes(q)||(l.Phone||'').includes(q)).slice(0,8);
+  const el = document.getElementById('remLeadResults');
+  if(!matches.length){ el.style.display='none'; return; }
+  el.style.display='block';
+  el.innerHTML = matches.map(l=>`<div class="rem-lead-item" onclick="selectReminderLead(${l.Sr})"><b>${l.Name}</b> · ${l.Phone||'—'}</div>`).join('');
+}
+function selectReminderLead(sr){
+  _remSelectedSr = sr;
+  const l = leads.find(x=>x.Sr===sr);
+  document.getElementById('remSelectedLead').textContent = '✅ '+l.Name+' ('+l.Phone+')';
+  document.getElementById('remLeadSearch').value='';
+  document.getElementById('remLeadResults').style.display='none';
+}
+
+function saveReminder(){
+  const date = document.getElementById('remDate').value;
+  const time = document.getElementById('remTime').value;
+  const note = document.getElementById('remNote').value.trim();
+  if(!date||!time){ toast('Date aur Time dono zaroori hain!'); return; }
+  const datetime = date+'T'+time;
+  const lead = _remSelectedSr ? leads.find(l=>l.Sr===_remSelectedSr) : null;
+  const rem = {type:'manual', sr:_remSelectedSr||null, leadName:lead?lead.Name:'', datetime, note, createdAt:Date.now()};
+  loadReminders();
+  reminders.push(rem);
+  saveReminders();
+  closeAddReminder();
+  renderNotifList();
+  toast('⏰ Reminder set ho gaya!');
+}
+
+function deleteReminder(idx){
+  if(idx<0){ toast('Auto reminder sirf lead se delete hoga'); return; }
+  if(!confirm('Yeh reminder delete karna chahte hain?')) return;
+  loadReminders();
+  reminders.splice(idx,1);
+  saveReminders();
+  renderNotifList();
+  toast('🗑️ Reminder delete ho gaya!');
+}
+
+function updateReminderBadge(){
+  const now = new Date();
+  const all = getAllReminders();
+  const urgent = all.filter(r=>{
+    const d = new Date(r.datetime)-now;
+    return d < 0 || (d>=0 && d<=15*60*1000);
+  }).length;
+  const badge = document.getElementById('notifBadge');
+  if(!badge) return;
+  if(urgent>0){ badge.textContent=urgent; badge.style.display='block'; }
+  else badge.style.display='none';
+}
+
+// Check every minute — show alerts for due/overdue reminders
+function startReminderChecker(){
+  clearInterval(_remTimer);
+  _remTimer = setInterval(()=>{
+    const now = new Date();
+    const all = getAllReminders();
+    all.forEach(r=>{
+      const dt = new Date(r.datetime);
+      const diff = dt - now;
+      const key = r.datetime + '_' + (r.sr||r.leadName||'');
+      // Alert once per reminder per session
+      if(diff>=-2*60*1000 && diff<=15*60*1000 && !_alertedKeys.has(key)){
+        _alertedKeys.add(key);
+        const lead = leads.find(l=>l.Sr===r.sr);
+        const name = lead?lead.Name:r.leadName||'Customer';
+        const timeStr = dt.toLocaleTimeString('hi-IN',{hour:'2-digit',minute:'2-digit',hour12:true});
+        if(diff<0){
+          toast(`🔴 OVERDUE: ${name} ko ${timeStr} pe call karna tha!`, 6000);
+        } else {
+          toast(`🟡 15 min mein call karo: ${name} (${timeStr})`, 6000);
+        }
+        updateReminderBadge();
+      }
+    });
+    updateReminderBadge();
+  }, 60000); // every minute
+  // Also check immediately on start
+  setTimeout(()=>{
+    const now = new Date();
+    getAllReminders().forEach(r=>{
+      const dt = new Date(r.datetime);
+      const diff = dt - now;
+      const key = r.datetime+'_'+(r.sr||r.leadName||'');
+      if(diff>=-2*60*1000&&diff<=15*60*1000&&!_alertedKeys.has(key)){
+        _alertedKeys.add(key);
+        const lead=leads.find(l=>l.Sr===r.sr);
+        const name=lead?lead.Name:r.leadName||'Customer';
+        if(diff<0) toast(`🔴 OVERDUE: ${name} ko call karna tha!`,6000);
+        else toast(`🟡 15 min mein: ${name} ko call karo!`,6000);
+      }
+    });
+    updateReminderBadge();
+  }, 2000);
 }
 
 // ===========================
