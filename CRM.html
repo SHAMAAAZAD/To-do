@@ -844,17 +844,34 @@ function startPoller(){
   clearInterval(_polling);
   _polling = setInterval(async()=>{
     if(document.hidden) return;
+    if(_syncing) return;
     try{
-      // Fetch only ts field (cheap)
+      // Check remote timestamp
       const r = await fetch(FB_BASE+'/ts.json?r='+Date.now(), {cache:'no-store'});
       if(!r.ok) return;
       const remTs = Number(await r.json()||0);
       if(remTs > _remoteTs){
-        const changed = await syncPull(false);
-        if(changed){ refreshAll(); rdash(); setSyncDot('ok',leads.length+'✓'); }
+        // Remote changed — pull full data and merge comments
+        const fr = await fetch(FB_BASE+'.json?r='+Date.now(), {cache:'no-store'});
+        if(!fr.ok) return;
+        const d = await fr.json();
+        if(!d||!d.leads||!d.leads.length) return;
+        
+        // Merge comments (keep more data from either side)
+        const merged = Object.assign({}, d.comments||{});
+        Object.entries(comments).forEach(([k,v])=>{
+          if(!merged[k]||v.length>merged[k].length) merged[k]=v;
+        });
+        
+        leads = d.leads;
+        comments = merged;
+        _remoteTs = Number(d.ts||0);
+        saveLeads(); saveComments();
+        refreshAll(); rdash();
+        setSyncDot('ok', leads.length+'✓');
       }
     } catch(e){}
-  }, 5000);
+  }, 3000); // every 3 seconds
 }
 
 // ── AUTO-SAVE: called after every change ──
@@ -1410,12 +1427,20 @@ function fpopSelect(filterId){
   closeFilterPopup();
   curFilter = filterId;
   curTab = 'all';
-  // Show only the 'all' view
   document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
   document.getElementById('view-all').classList.add('active');
-  // Update label
-  const labels = {all:'📋 Sabhi Leads',followup:'🔔 Follow Up',demand:'💰 Demand Paid',cnp:'📵 CNP',newleads:'🆕 New Leads'};
-  document.getElementById('mainTabLabel').textContent = labels[filterId]||'📋 Sabhi Leads';
+  // Update label with count
+  const cnt={};leads.forEach(l=>{cnt[l.Status]=(cnt[l.Status]||0)+1;});
+  const labels = {
+    all:     {text:'📋 Sabhi Leads', count: leads.length},
+    followup:{text:'🔔 Follow Up',   count: cnt['Follow Up']||0},
+    demand:  {text:'💰 Demand Paid', count: cnt['Demand Paid']||0},
+    cnp:     {text:'📵 CNP',         count: cnt['CNP']||0},
+    newleads:{text:'🆕 New Leads',   count: cnt['New']||0}
+  };
+  const lbl = labels[filterId];
+  document.getElementById('mainTabLabel').textContent = lbl ? lbl.text : '📋 Sabhi Leads';
+  document.getElementById('tb5').textContent = lbl ? lbl.count : leads.length;
   renderFilteredAll();
 }
 
@@ -1425,8 +1450,10 @@ function fpopSelectStatus(status){
   curTab = 'all';
   document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
   document.getElementById('view-all').classList.add('active');
+  const cnt={};leads.forEach(l=>{cnt[l.Status]=(cnt[l.Status]||0)+1;});
   const c = getStatusColor(status);
   document.getElementById('mainTabLabel').textContent = status;
+  document.getElementById('tb5').textContent = cnt[status]||0;
   renderFilteredAll();
 }
 
@@ -1498,21 +1525,14 @@ function swById(id,tidx){
 const COLS=['#','नाम','फ़ोन','Project','Status','Follow-up','Ref By','Action'];
 const KEYS=[null,'Name','Phone','Project','Status','Followup_Date','Ref_By',null];
 
-function getStatusFilter(tab){
-  if(tab==='followup')return 'Follow Up';
-  if(tab==='demand')return 'Demand Paid';
-  if(tab==='cnp')return 'CNP';
-  if(tab==='newleads')return 'New';
-  return null;
-}
-
 function renderTab(tab){
   const sf=getStatusFilter(tab);
   const pfx=tab==='all'?'all':tab==='followup'?'fu':tab==='demand'?'dp':tab==='cnp'?'cnp':'nl';
   const srchEl=document.getElementById(`${pfx}-srch`);
   const q=srchEl?srchEl.value.toLowerCase():'';
 
-  const sfil=tab==='all'?(document.getElementById('all-sfil')||{value:''}).value:'';
+  // When curFilter is set (from popup), ignore the dropdown sfil to avoid conflict
+  const sfil = (tab==='all' && curFilter==='all') ? (document.getElementById('all-sfil')||{value:''}).value : '';
   const pfilEl=document.getElementById(`${pfx}-pfil`);
   const rfilEl=document.getElementById(`${pfx}-rfil`);
   const pfil=pfilEl?pfilEl.value:'';
@@ -1669,10 +1689,14 @@ function refreshTab(tab){
   const pfx=tab==='all'?'all':tab==='followup'?'fu':tab==='demand'?'dp':tab==='cnp'?'cnp':'nl';
   const srch=document.getElementById(`${pfx}-srch`);
   if(srch)srch.value='';
-  // Clear all filter dropdowns for this tab
   const pf=document.getElementById(`${pfx}-pfil`);if(pf)pf.value='';
   const rf=document.getElementById(`${pfx}-rfil`);if(rf)rf.value='';
-  if(tab==='all'){const sf=document.getElementById('all-sfil');if(sf)sf.value='';}
+  if(tab==='all'){
+    const sf=document.getElementById('all-sfil');if(sf)sf.value='';
+    // Reset filter popup selection back to "Sabhi Leads"
+    curFilter='all';
+    document.getElementById('mainTabLabel').textContent='📋 Sabhi Leads';
+  }
   sortState={col:null,dir:'asc'};
   colFilters={};
   leads=loadLeads();
