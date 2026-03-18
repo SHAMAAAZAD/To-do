@@ -370,8 +370,8 @@ tr.rInvalidNumber:hover{background:#FFE4E6;}
         <div class="threedot-item" onclick="openImportModal();closeThreeDot()">📤 Upload Data</div>
         <div class="threedot-item" onclick="shareWithData();closeThreeDot()">💾 Save to File</div>
         <hr class="threedot-sep">
-        <div class="threedot-item" onclick="openSyncSetup();closeThreeDot()">☁️ Cloud Sync Setup</div>
-        <div class="threedot-item" onclick="syncPull().then(r=>{if(r){refreshAll();toast('✅ Data sync ho gaya!');}});closeThreeDot()">🔄 Abhi Sync Karo</div>
+        <div class="threedot-item" onclick="openSyncSetup();closeThreeDot()">🔥 Real-Time Sync Setup</div>
+        <div class="threedot-item" onclick="syncPull().then(r=>{if(r){refreshAll();toast('✅ Sync ho gaya!');}});closeThreeDot()">🔄 Abhi Sync Karo</div>
         <hr class="threedot-sep">
         <div class="threedot-item danger" onclick="doLogout()">🚪 Logout</div>
       </div>
@@ -697,125 +697,163 @@ tr.rInvalidNumber:hover{background:#FFE4E6;}
 // ===========================
 // Ek baar setup karein: apna Google Apps Script URL yahan daalen
 // Setup guide: ⋮ menu → ☁️ Cloud Sync Setup
-let GS_URL = localStorage.getItem('crm_gs_url') || '';
-let syncEnabled = !!GS_URL;
-let syncStatus = 'idle'; // idle | syncing | ok | error
+// ===========================
+// FIREBASE REAL-TIME SYNC
+// ===========================
+let FB_URL = 'https://crm-sync-e9a51-default-rtdb.firebaseio.com';
+let FB_SECRET = '';
+let syncEnabled = true;
+let syncStatus = 'idle';
 let _syncTimer = null;
+let _realtimePoller = null;
+let _lastSyncHash = '';
+
+const FB_KEY_LS = 'crm_firebase_config';
+
+function loadFirebaseConfig(){
+  try{
+    const d = localStorage.getItem(FB_KEY_LS);
+    if(d){ const p=JSON.parse(d); FB_URL=p.url||''; FB_SECRET=p.secret||''; syncEnabled=!!(FB_URL); }
+  }catch(e){}
+}
+function saveFirebaseConfig(){
+  try{ localStorage.setItem(FB_KEY_LS, JSON.stringify({url:FB_URL, secret:FB_SECRET})); }catch(e){}
+}
+
+function fbEndpoint(path){
+  const base = FB_URL.replace(/\/$/,'');
+  const auth = FB_SECRET ? `?auth=${FB_SECRET}` : '';
+  return `${base}/${path}.json${auth}`;
+}
 
 function setSyncStatus(s, msg){
   syncStatus = s;
   const el = document.getElementById('syncDot');
   if(!el) return;
-  const map = {idle:'⚫',syncing:'🔄',ok:'🟢',error:'🔴'};
-  el.textContent = (map[s]||'⚫') + (msg?' '+msg:'');
+  const map = {idle:'',syncing:'🔄',ok:'🟢',error:'🔴'};
+  el.textContent = (map[s]||'') + (msg?' '+msg:'');
   el.title = msg||s;
 }
 
-async function gsCall(action, payload){
-  if(!GS_URL) return null;
-  try{
-    const r = await fetch(GS_URL, {
-      method:'POST',
-      headers:{'Content-Type':'text/plain'},
-      body: JSON.stringify({action, ...payload})
-    });
-    return await r.json();
-  }catch(e){ return {error: e.message}; }
-}
-
-// Push current data to Google Sheets
+// Push data to Firebase
 async function syncPush(){
-  if(!syncEnabled||!GS_URL) return;
+  if(!syncEnabled||!FB_URL) return;
   setSyncStatus('syncing');
-  const res = await gsCall('save',{
-    leads: leads,
-    comments: comments
-  });
-  if(res && !res.error){ setSyncStatus('ok','Saved ✓'); }
-  else { setSyncStatus('error', res?.error||'Failed'); }
-}
-
-// Pull latest data from Google Sheets
-async function syncPull(){
-  if(!syncEnabled||!GS_URL) return false;
-  setSyncStatus('syncing','Loading...');
-  const res = await gsCall('load',{});
-  if(res && res.leads && Array.isArray(res.leads)){
-    leads = res.leads;
-    comments = res.comments||{};
-    saveLeadsAndSync(); saveCommentsAndSync();
-    setSyncStatus('ok', res.leads.length+' leads');
-    return true;
-  } else {
-    setSyncStatus('error', res?.error||'No data');
-    return false;
-  }
-}
-
-// Auto-sync every 2 minutes when open
-function startAutoSync(){
-  clearInterval(_syncTimer);
-  if(!syncEnabled) return;
-  _syncTimer = setInterval(async()=>{
-    const res = await gsCall('load',{});
-    if(res && res.leads && Array.isArray(res.leads)){
-      // Only update if remote has more recent data
-      if(res.leads.length > 0){
-        leads = res.leads;
-        comments = res.comments||{};
-        saveLeadsAndSync(); saveCommentsAndSync();
-        refreshAll();
-        setSyncStatus('ok', res.leads.length+' leads');
-      }
+  try{
+    const payload = {
+      leads: leads,
+      comments: comments,
+      updatedAt: Date.now()
+    };
+    const r = await fetch(fbEndpoint('crmdata'), {
+      method: 'PUT',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(payload)
+    });
+    if(r.ok){
+      _lastSyncHash = payload.updatedAt.toString();
+      setSyncStatus('ok', leads.length+' leads ✓');
+    } else {
+      setSyncStatus('error','Push failed '+r.status);
     }
-  }, 120000);
+  }catch(e){ setSyncStatus('error', e.message); }
 }
 
-// Save with sync
+// Pull data from Firebase
+async function syncPull(){
+  if(!syncEnabled||!FB_URL) return false;
+  setSyncStatus('syncing','Loading...');
+  try{
+    const r = await fetch(fbEndpoint('crmdata'));
+    if(!r.ok){ setSyncStatus('error','Pull failed '+r.status); return false; }
+    const data = await r.json();
+    if(!data||!data.leads||!Array.isArray(data.leads)){ setSyncStatus('error','No data'); return false; }
+    // Only update if remote data is different
+    if(data.updatedAt && data.updatedAt.toString()===_lastSyncHash){ setSyncStatus('ok',data.leads.length+' leads ✓'); return false; }
+    leads = data.leads;
+    comments = data.comments||{};
+    saveLeads(); saveComments();
+    _lastSyncHash = data.updatedAt ? data.updatedAt.toString() : '';
+    setSyncStatus('ok', leads.length+' leads ✓');
+    return true;
+  }catch(e){ setSyncStatus('error', e.message); return false; }
+}
+
+// Real-time polling — checks every 8 seconds for changes
+function startRealtimeSync(){
+  stopRealtimeSync();
+  if(!syncEnabled||!FB_URL) return;
+  setSyncStatus('ok','Live 🟢');
+  _realtimePoller = setInterval(async()=>{
+    // Only poll if tab is visible
+    if(document.hidden) return;
+    try{
+      const r = await fetch(fbEndpoint('crmdata/updatedAt'));
+      if(!r.ok) return;
+      const ts = await r.json();
+      if(ts && ts.toString() !== _lastSyncHash){
+        // Remote changed — pull full data
+        const pulled = await syncPull();
+        if(pulled){ refreshAll(); toast('🔄 New data sync ho gaya!',2000); }
+      }
+    }catch(e){}
+  }, 8000);
+}
+
+function stopRealtimeSync(){
+  if(_realtimePoller){ clearInterval(_realtimePoller); _realtimePoller=null; }
+}
+
+// Save with auto-push
 function saveLeadsAndSync(){
   saveLeads();
   if(syncEnabled){
     clearTimeout(window._pushTimer);
-    window._pushTimer = setTimeout(syncPush, 1500);
+    window._pushTimer = setTimeout(syncPush, 1000);
   }
 }
 function saveCommentsAndSync(){
   saveComments();
   if(syncEnabled){
     clearTimeout(window._pushTimer2);
-    window._pushTimer2 = setTimeout(syncPush, 1500);
+    window._pushTimer2 = setTimeout(syncPush, 1000);
   }
 }
 
-// Setup modal
+// Setup modal functions
 function openSyncSetup(){
+  loadFirebaseConfig();
+  document.getElementById('fbUrlInp').value = FB_URL||'';
+  document.getElementById('fbSecretInp').value = FB_SECRET||'';
   document.getElementById('syncSetupmbg').classList.add('show');
-  document.getElementById('gsUrlInp').value = GS_URL||'';
 }
 function closeSyncSetup(){ document.getElementById('syncSetupmbg').classList.remove('show'); }
-async function saveSyncUrl(){
-  const url = document.getElementById('gsUrlInp').value.trim();
-  if(!url){ toast('URL daalen!'); return; }
-  GS_URL = url;
-  localStorage.setItem('crm_gs_url', url);
-  syncEnabled = true;
-  toast('🔄 Test kar raha hai...');
-  const res = await gsCall('ping',{});
-  if(res && res.ok){
-    toast('✅ Connected! Data pull ho raha hai...');
-    closeSyncSetup();
-    const pulled = await syncPull();
-    if(pulled){ refreshAll(); startAutoSync(); }
-  } else {
-    toast('❌ Connect nahi hua: '+(res?.error||'URL check karein'));
-  }
+
+async function saveSyncConfig(){
+  const url = document.getElementById('fbUrlInp').value.trim().replace(/\/$/,'');
+  const secret = document.getElementById('fbSecretInp').value.trim();
+  if(!url){ toast('Firebase URL daalen!'); return; }
+  FB_URL = url; FB_SECRET = secret; syncEnabled = true;
+  saveFirebaseConfig();
+  toast('🔄 Test ho raha hai...');
+  try{
+    const r = await fetch(fbEndpoint('ping'), {method:'PUT', headers:{'Content-Type':'application/json'}, body:'"ok"'});
+    if(r.ok){
+      toast('✅ Connected! Data sync ho raha hai...');
+      closeSyncSetup();
+      const pulled = await syncPull();
+      if(pulled) refreshAll();
+      startRealtimeSync();
+    } else { toast('❌ Error: '+r.status+' — URL/Secret check karein'); }
+  }catch(e){ toast('❌ Connect nahi hua: '+e.message); }
 }
+
 function disableSync(){
-  if(!confirm('Cloud sync band karna chahte hain?')) return;
-  GS_URL=''; syncEnabled=false;
-  localStorage.removeItem('crm_gs_url');
-  clearInterval(_syncTimer);
-  setSyncStatus('idle','Off');
+  if(!confirm('Real-time sync band karna chahte hain?')) return;
+  FB_URL=''; FB_SECRET=''; syncEnabled=false;
+  saveFirebaseConfig();
+  stopRealtimeSync();
+  setSyncStatus('idle','');
   closeSyncSetup();
   toast('☁️ Sync band ho gaya');
 }
@@ -2474,6 +2512,7 @@ function downloadDoc(idx){
 // ===========================
 async function startApp(){
   loadCloudConfig();
+  loadFirebaseConfig();
   // Load statusColors — try IndexedDB first
   try{
     const rawSC = await dbGet(STATUS_COLORS_KEY);
@@ -2576,6 +2615,16 @@ async function startApp(){
 
   rdash();
   renderTab('all');
+
+  // Start real-time sync if Firebase configured
+  if(syncEnabled && FB_URL){
+    // First pull latest data from cloud
+    syncPull().then(pulled => {
+      if(pulled){ refreshAll(); }
+      startRealtimeSync();
+      setSyncStatus('ok', leads.length+' leads ✓');
+    });
+  }
 }
 
 // ===========================
@@ -2583,32 +2632,33 @@ async function startApp(){
 // ===========================
 checkSession();
 </script>
-<!-- CLOUD SETUP MODAL -->
-<div class="mbg" id="cloudSetupMbg" onclick="if(event.target===this)closeCloudSetup()">
-  <div class="modal" style="max-width:420px">
-    <div class="mhd"><h2>☁️ Cloud Sync Setup</h2><button class="mcl" onclick="closeCloudSetup()">✕</button></div>
+<!-- FIREBASE SYNC SETUP MODAL -->
+<div class="mbg" id="syncSetupmbg" onclick="if(event.target===this)closeSyncSetup()">
+  <div class="modal" style="max-width:440px">
+    <div class="mhd"><h2>🔥 Real-Time Sync Setup</h2><button class="mcl" onclick="closeSyncSetup()">✕</button></div>
     <div class="mbd">
-      <div style="background:#EFF6FF;border-radius:10px;padding:12px 14px;margin-bottom:14px;font-size:12px;color:#1D4ED8;line-height:1.7">
-        <b>Step 1:</b> Neeche apni <b>X-Master-Key</b> daalo (jsonbin.io → API Keys se)<br>
-        <b>Step 2:</b> <b>"🪣 Bin Banao"</b> button dabao — Bin ID automatic aa jaayegi<br>
-        <b>Step 3:</b> <b>"✅ Save"</b> karo — bas ho gaya!
+      <div style="background:#FFF7ED;border-radius:10px;padding:12px 14px;margin-bottom:16px;font-size:12px;color:#9A3412;line-height:1.8;border:1px solid #FED7AA">
+        <b>Firebase free setup (5 min):</b><br>
+        1. <a href="https://console.firebase.google.com" target="_blank" style="color:#EA580C;font-weight:800">console.firebase.google.com</a> → New Project banao<br>
+        2. Project mein → <b>Build → Realtime Database</b> → Create Database<br>
+        3. <b>Start in test mode</b> select karo → Done<br>
+        4. Database URL copy karo (jaise: <code>https://xxx-rtdb.firebaseio.com</code>)<br>
+        5. Woh URL neeche daalo → Save karo
       </div>
       <div class="fg">
-        <label class="fl">X-Master-Key <span style="color:var(--r)">*</span></label>
-        <input class="finp" id="cloudApiKey" placeholder="$2a$10$..." type="password" oninput="document.getElementById('cloudBinId').value=''">
-      </div>
-      <div class="fg" style="margin-top:4px">
-        <button class="btn-pri" style="width:100%;margin-bottom:8px" onclick="autoCreateBin()">🪣 Bin Banao (Auto)</button>
+        <label class="fl">🔥 Firebase Database URL <span style="color:var(--r)">*</span></label>
+        <input class="finp" id="fbUrlInp" placeholder="https://your-project-default-rtdb.firebaseio.com" type="url">
       </div>
       <div class="fg">
-        <label class="fl">Bin ID <span style="color:var(--muted);font-size:11px">(auto fill hoga)</span></label>
-        <input class="finp" id="cloudBinId" placeholder="Pehle API Key daalo phir Bin Banao..." type="text" readonly style="background:#f8fafc;color:var(--slate)">
+        <label class="fl">🔑 Database Secret <span style="color:var(--muted);font-size:11px">(optional — test mode mein blank chhodo)</span></label>
+        <input class="finp" id="fbSecretInp" placeholder="Project Settings → Service Accounts → Database Secrets" type="password">
       </div>
-      <div id="cloudSetupStatus" style="font-size:12px;font-weight:700;margin-top:6px;min-height:18px"></div>
+      <div id="fbSetupStatus" style="font-size:12px;font-weight:700;margin-top:6px;min-height:18px;color:var(--g)"></div>
     </div>
-    <div class="mft">
-      <button class="btn-sec" onclick="closeCloudSetup()">Cancel</button>
-      <button class="btn-pri" onclick="saveCloudSetup()">✅ Save</button>
+    <div class="mft" style="flex-wrap:wrap;gap:8px">
+      <button class="btn-sec" onclick="disableSync()" style="color:var(--r)">🔴 Sync Band Karo</button>
+      <button class="btn-sec" onclick="closeSyncSetup()">Cancel</button>
+      <button class="btn-pri" onclick="saveSyncConfig()">✅ Connect & Save</button>
     </div>
   </div>
 </div>
