@@ -390,7 +390,7 @@ tr.rInvalidNumber:hover{background:#FFE4E6;}
         <div class="threedot-item" onclick="shareWithData();closeThreeDot()">💾 Save to File</div>
         <hr class="threedot-sep">
         <div class="threedot-item" onclick="openSyncSetup();closeThreeDot()">🔥 Real-Time Sync Setup</div>
-        <div class="threedot-item" onclick="syncPull().then(r=>{if(r){refreshAll();toast('✅ Sync ho gaya!');}});closeThreeDot()">🔄 Abhi Sync Karo</div>
+        <div class="threedot-item" onclick="forceSyncNow();closeThreeDot()">🔄 Force Sync Karo</div>
         <hr class="threedot-sep">
         <div class="threedot-item danger" onclick="doLogout()">🚪 Logout</div>
       </div>
@@ -784,167 +784,155 @@ tr.rInvalidNumber:hover{background:#FFE4E6;}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script>
 // ===========================
-// GOOGLE SHEETS SYNC CONFIG
+// FIREBASE — Single Source of Truth
 // ===========================
-// Ek baar setup karein: apna Google Apps Script URL yahan daalen
-// Setup guide: ⋮ menu → ☁️ Cloud Sync Setup
-// ===========================
-// FIREBASE REAL-TIME SYNC
-// ===========================
-let FB_URL = 'https://crm-sync-e9a51-default-rtdb.firebaseio.com';
-let FB_SECRET = '';
-let syncEnabled = true;
-let syncStatus = 'idle';
-let _syncTimer = null;
-let _realtimePoller = null;
-let _lastSyncHash = '';
-// Unique device ID to avoid echo updates
-const _deviceId = localStorage.getItem('crm_device_id') || (()=>{const id='dev_'+Math.random().toString(36).slice(2);localStorage.setItem('crm_device_id',id);return id;})();
+const FB_BASE = 'https://crm-sync-e9a51-default-rtdb.firebaseio.com/crmdata';
+let _syncing = false;
+let _polling = null;
+let _remoteTs = 0; // last known remote timestamp
 
-const FB_KEY_LS = 'crm_firebase_config';
-
-function loadFirebaseConfig(){
-  try{
-    const d = localStorage.getItem(FB_KEY_LS);
-    if(d){ const p=JSON.parse(d); FB_URL=p.url||''; FB_SECRET=p.secret||''; syncEnabled=!!(FB_URL); }
-  }catch(e){}
-}
-function saveFirebaseConfig(){
-  try{ localStorage.setItem(FB_KEY_LS, JSON.stringify({url:FB_URL, secret:FB_SECRET})); }catch(e){}
-}
-
-function fbEndpoint(path){
-  const base = FB_URL.replace(/\/$/,'');
-  const auth = FB_SECRET ? `?auth=${FB_SECRET}` : '';
-  return `${base}/${path}.json${auth}`;
-}
-
-function setSyncStatus(s, msg){
-  syncStatus = s;
+function setSyncDot(state, msg){
   const el = document.getElementById('syncDot');
   if(!el) return;
-  const map = {idle:'',syncing:'🔄',ok:'🟢',error:'🔴'};
-  el.textContent = (map[s]||'') + (msg?' '+msg:'');
-  el.title = msg||s;
+  el.textContent = ({ok:'🟢',err:'🔴',busy:'🔄'}[state]||'') + (msg?' '+msg:'');
 }
 
-// Push data to Firebase
+// ── PUSH: local → Firebase ──
 async function syncPush(){
-  if(!syncEnabled||!FB_URL) return;
-  setSyncStatus('syncing');
+  if(_syncing) return;
+  _syncing = true;
+  setSyncDot('busy','saving...');
   try{
     const ts = Date.now();
-    const payload = { leads, comments, updatedAt: ts, deviceId: _deviceId };
-    const r = await fetch(fbEndpoint('crmdata'), {
-      method: 'PUT',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify(payload)
+    const body = JSON.stringify({leads, comments, ts, n: leads.length});
+    const r = await fetch(FB_BASE+'.json', {
+      method:'PUT', headers:{'Content-Type':'application/json'}, body
     });
     if(r.ok){
-      _lastSyncHash = ts.toString();
-      setSyncStatus('ok', leads.length+' leads ✓');
-    } else { setSyncStatus('error','Push failed '+r.status); }
-  }catch(e){ setSyncStatus('error', e.message); }
+      _remoteTs = ts;
+      setSyncDot('ok', leads.length+'✓');
+    } else setSyncDot('err', r.status+'');
+  } catch(e){ setSyncDot('err','offline'); }
+  finally{ _syncing = false; }
 }
 
-// Pull data from Firebase
-async function syncPull(){
-  if(!syncEnabled||!FB_URL) return false;
-  setSyncStatus('syncing','...');
+// ── PULL: Firebase → local (always overwrite) ──
+async function syncPull(force){
+  setSyncDot('busy','...');
   try{
-    const r = await fetch(fbEndpoint('crmdata'));
-    if(!r.ok){ setSyncStatus('error','Pull failed '+r.status); return false; }
-    const data = await r.json();
-    if(!data||!data.leads||!Array.isArray(data.leads)){ setSyncStatus('idle',''); return false; }
-    const remoteTs = data.updatedAt ? data.updatedAt.toString() : '';
-    // Skip if same timestamp or came from this device
-    if(remoteTs === _lastSyncHash){ setSyncStatus('ok', data.leads.length+' leads ✓'); return false; }
-    if(data.deviceId === _deviceId){ setSyncStatus('ok', data.leads.length+' leads ✓'); return false; }
-    leads = data.leads;
-    comments = data.comments||{};
-    saveLeads(); saveComments();
-    _lastSyncHash = remoteTs;
-    setSyncStatus('ok', leads.length+' leads ✓');
-    return true;
-  }catch(e){ setSyncStatus('error', e.message); return false; }
+    const r = await fetch(FB_BASE+'.json?r='+Date.now(), {cache:'no-store'});
+    if(!r.ok){ setSyncDot('err', r.status+''); return false; }
+    const d = await r.json();
+    if(!d||!d.leads||!d.leads.length){ setSyncDot('ok','empty'); return false; }
+    const remTs = Number(d.ts||0);
+    // Update if: forced, OR remote is newer, OR count differs
+    if(force || remTs > _remoteTs || d.leads.length !== leads.length){
+      leads = d.leads;
+      comments = d.comments||{};
+      _remoteTs = remTs;
+      saveLeads(); saveComments();
+      setSyncDot('ok', leads.length+'✓');
+      return true;
+    }
+    setSyncDot('ok', leads.length+'✓');
+    return false;
+  } catch(e){ setSyncDot('err','offline'); return false; }
 }
 
-// Real-time polling — checks every 8 seconds for changes
-function startRealtimeSync(){
-  stopRealtimeSync();
-  if(!syncEnabled||!FB_URL) return;
-  setSyncStatus('ok','Live 🟢');
-  _realtimePoller = setInterval(async()=>{
+// ── POLLER: check Firebase every 5 sec ──
+function startPoller(){
+  clearInterval(_polling);
+  _polling = setInterval(async()=>{
     if(document.hidden) return;
     try{
-      const r = await fetch(fbEndpoint('crmdata/updatedAt'));
+      // Fetch only ts field (cheap)
+      const r = await fetch(FB_BASE+'/ts.json?r='+Date.now(), {cache:'no-store'});
       if(!r.ok) return;
-      const ts = await r.json();
-      if(ts && ts.toString() !== _lastSyncHash){
-        const pulled = await syncPull();
-        if(pulled){ refreshAll(); }
+      const remTs = Number(await r.json()||0);
+      if(remTs > _remoteTs){
+        const changed = await syncPull(false);
+        if(changed){ refreshAll(); rdash(); setSyncDot('ok',leads.length+'✓'); }
       }
-    }catch(e){}
-  }, 3000); // Check every 3 seconds
+    } catch(e){}
+  }, 5000);
 }
 
-function stopRealtimeSync(){
-  if(_realtimePoller){ clearInterval(_realtimePoller); _realtimePoller=null; }
-}
-
-// Save with auto-push
+// ── AUTO-SAVE: called after every change ──
 function saveLeadsAndSync(){
   saveLeads();
-  if(syncEnabled){
-    clearTimeout(window._pushTimer);
-    window._pushTimer = setTimeout(syncPush, 1000);
-  }
+  clearTimeout(window._pt);
+  window._pt = setTimeout(syncPush, 600);
 }
 function saveCommentsAndSync(){
   saveComments();
-  if(syncEnabled){
-    clearTimeout(window._pushTimer2);
-    window._pushTimer2 = setTimeout(syncPush, 1000);
-  }
+  clearTimeout(window._pt2);
+  window._pt2 = setTimeout(syncPush, 600);
 }
 
-// Setup modal functions
+// ── FORCE SYNC: manual button ──
+async function forceSyncNow(){
+  toast('🔄 Sync ho raha hai...');
+  try{
+    const r = await fetch(FB_BASE+'.json?r='+Date.now(), {cache:'no-store'});
+    const d = r.ok ? await r.json() : null;
+    const remN = d?.leads?.length||0;
+    const locN = leads.length;
+    const remComments = d?.comments||{};
+    const remCCount = Object.keys(remComments).length;
+    const locCCount = Object.keys(comments).length;
+
+    if(!remN){
+      // Firebase empty — push everything
+      await syncPush();
+      toast('✅ '+locN+' leads + '+locCCount+' comments Firebase pe push ho gaye!');
+      return;
+    }
+
+    // Merge comments from both sides (take whichever has more per key)
+    const merged = {...remComments};
+    Object.entries(comments).forEach(([k,v])=>{
+      if(!merged[k]||v.length>merged[k].length) merged[k]=v;
+    });
+
+    if(remN > locN){
+      // Firebase has more leads
+      leads = d.leads;
+      comments = merged;
+      _remoteTs = Number(d.ts||0);
+      saveLeads(); saveComments();
+      await syncPush(); // push merged comments back
+      refreshAll(); rdash();
+      setSyncDot('ok',leads.length+'✓');
+      toast('✅ Firebase se '+leads.length+' leads + '+Object.keys(merged).length+' comments sync ho gaye!');
+    } else if(locN > remN){
+      // Local has more leads
+      comments = merged;
+      saveComments();
+      await syncPush();
+      toast('✅ Aapki '+locN+' leads + '+Object.keys(merged).length+' comments Firebase pe save ho gayi!');
+    } else {
+      // Same leads — just sync comments
+      comments = merged;
+      saveComments();
+      await syncPush();
+      refreshAll();
+      setSyncDot('ok',leads.length+'✓');
+      toast('✅ '+leads.length+' leads + '+Object.keys(merged).length+' comments sync ho gaye!');
+    }
+  } catch(e){ setSyncDot('err','err'); toast('❌ '+e.message); }
+}
+
+// ── SYNC SETUP MODAL ──
 function openSyncSetup(){
-  loadFirebaseConfig();
-  document.getElementById('fbUrlInp').value = FB_URL||'';
-  document.getElementById('fbSecretInp').value = FB_SECRET||'';
   document.getElementById('syncSetupmbg').classList.add('show');
 }
-function closeSyncSetup(){ document.getElementById('syncSetupmbg').classList.remove('show'); }
-
-async function saveSyncConfig(){
-  const url = document.getElementById('fbUrlInp').value.trim().replace(/\/$/,'');
-  const secret = document.getElementById('fbSecretInp').value.trim();
-  if(!url){ toast('Firebase URL daalen!'); return; }
-  FB_URL = url; FB_SECRET = secret; syncEnabled = true;
-  saveFirebaseConfig();
-  toast('🔄 Test ho raha hai...');
-  try{
-    const r = await fetch(fbEndpoint('ping'), {method:'PUT', headers:{'Content-Type':'application/json'}, body:'"ok"'});
-    if(r.ok){
-      toast('✅ Connected! Data sync ho raha hai...');
-      closeSyncSetup();
-      const pulled = await syncPull();
-      if(pulled) refreshAll();
-      startRealtimeSync();
-    } else { toast('❌ Error: '+r.status+' — URL/Secret check karein'); }
-  }catch(e){ toast('❌ Connect nahi hua: '+e.message); }
+function closeSyncSetup(){
+  document.getElementById('syncSetupmbg').classList.remove('show');
 }
-
-function disableSync(){
-  if(!confirm('Real-time sync band karna chahte hain?')) return;
-  FB_URL=''; FB_SECRET=''; syncEnabled=false;
-  saveFirebaseConfig();
-  stopRealtimeSync();
-  setSyncStatus('idle','');
-  closeSyncSetup();
-  toast('☁️ Sync band ho gaya');
-}
+function saveSyncConfig(){ closeSyncSetup(); toast('Firebase already configured hai!'); }
+function disableSync(){ closeSyncSetup(); }
+function syncPush_compat(){ return syncPush(); }
+function syncPull_compat(){ return syncPull(true); }
 
 // ===========================
 // LOGIN SYSTEM
@@ -2674,21 +2662,7 @@ function downloadDoc(idx){
 // startApp — called after login
 // ===========================
 async function startApp(){
-  loadCloudConfig();
-  loadFirebaseConfig();
-  // Load statusColors — try IndexedDB first
-  try{
-    const rawSC = await dbGet(STATUS_COLORS_KEY);
-    if(rawSC){
-      statusColors = JSON.parse(rawSC);
-      // Fill any missing keys from defaults
-      Object.keys(DEFAULT_STATUS_COLORS).forEach(k=>{
-        if(!statusColors[k]) statusColors[k]=DEFAULT_STATUS_COLORS[k];
-      });
-    } else {
-      loadStatusColors();
-    }
-  }catch(e){ loadStatusColors(); }
+  loadStatusColors();
   // ── STEP 1: Load leads — IndexedDB pehle, phir localStorage, phir INITIAL_LEADS ──
   const leadsKey = currentUser === OWNER_PHONE ? BASE_LEADS : userKey('leads');
   const commentsKey = currentUser === OWNER_PHONE ? BASE_COMMENTS : userKey('comments');
@@ -2782,14 +2756,62 @@ async function startApp(){
   updateReminderBadge();
   startReminderChecker();
 
-  // Start real-time sync if Firebase configured
-  if(syncEnabled && FB_URL){
-    syncPull().then(pulled => {
-      if(pulled){ refreshAll(); }
-      startRealtimeSync();
-      setSyncStatus('ok', leads.length+' leads ✓');
-    });
+  // ── FIREBASE SYNC ON STARTUP ──
+  setSyncDot('busy','connecting...');
+  try{
+    // Step A: Fetch Firebase data
+    const fbResp = await fetch(FB_BASE+'.json?r='+Date.now(), {cache:'no-store'});
+    const fbData = fbResp.ok ? await fbResp.json() : null;
+    const fbLeads = fbData?.leads || [];
+    const fbComments = fbData?.comments || {};
+    const fbTs = Number(fbData?.ts||0);
+    const fbLeadCount = fbLeads.length;
+    const fbCommentCount = Object.keys(fbComments).length;
+    const localCommentCount = Object.keys(comments).length;
+
+    if(fbLeadCount === 0){
+      // Firebase empty — push everything local
+      await syncPush();
+      setSyncDot('ok', leads.length+'✓');
+    } else if(fbLeadCount > leads.length){
+      // Firebase has more leads — use Firebase
+      leads = fbLeads;
+      // Merge comments: keep whichever has more per key
+      const merged = {...comments};
+      Object.entries(fbComments).forEach(([k,v])=>{
+        if(!merged[k]||v.length>merged[k].length) merged[k]=v;
+      });
+      comments = merged;
+      _remoteTs = fbTs;
+      saveLeads(); saveComments();
+      refreshAll(); rdash();
+      setSyncDot('ok', leads.length+'✓');
+    } else if(fbLeadCount === leads.length){
+      // Same leads — merge comments from both
+      const merged = {...fbComments};
+      Object.entries(comments).forEach(([k,v])=>{
+        if(!merged[k]||v.length>merged[k].length) merged[k]=v;
+      });
+      const mergedCount = Object.keys(merged).length;
+      comments = merged;
+      _remoteTs = fbTs;
+      saveComments();
+      // Push back if local had more comments
+      if(localCommentCount > fbCommentCount){
+        await syncPush();
+        setSyncDot('ok', leads.length+'✓ +comments');
+      } else {
+        setSyncDot('ok', leads.length+'✓');
+      }
+    } else {
+      // Local has more leads — push to Firebase
+      await syncPush();
+      setSyncDot('ok', leads.length+'✓');
+    }
+  } catch(e){
+    setSyncDot('err','offline');
   }
+  startPoller();
 }
 
 // ===========================
