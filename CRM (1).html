@@ -197,6 +197,22 @@ html,body{height:100%;font-family:'Nunito',sans-serif;background:var(--bg);color
 .toolbar{padding:9px 14px;background:white;border-bottom:1px solid var(--border);display:flex;gap:7px;align-items:center;flex-wrap:wrap;}
 .sinp{flex:1;min-width:130px;padding:7px 11px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;outline:none;font-family:inherit;}
 .sinp:focus{border-color:var(--p);}
+/* MULTI SELECT FILTER */
+.msel-wrap{position:relative;display:inline-block;}
+.msel-btn{padding:7px 8px;border:1.5px solid var(--border);border-radius:8px;font-size:12px;outline:none;background:white;font-family:inherit;max-width:130px;min-width:90px;cursor:pointer;display:flex;align-items:center;gap:4px;justify-content:space-between;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.msel-btn.active-filter{border-color:var(--p);color:var(--p);background:var(--pl);}
+.msel-btn:focus{border-color:var(--p);}
+.msel-btn .msel-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;text-align:left;}
+.msel-btn .msel-arrow{font-size:9px;flex-shrink:0;opacity:.6;}
+.msel-dd{position:absolute;top:calc(100% + 3px);left:0;background:white;border:1.5px solid var(--border);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.15);z-index:500;min-width:160px;max-height:240px;overflow-y:auto;display:none;padding:4px;}
+.msel-dd.open{display:block;}
+.msel-opt{display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:7px;cursor:pointer;font-size:12px;font-weight:600;color:var(--text);}
+.msel-opt:hover{background:var(--pl);}
+.msel-opt input[type=checkbox]{accent-color:var(--p);width:14px;height:14px;cursor:pointer;}
+.msel-opt.checked{color:var(--p);font-weight:800;}
+.msel-clear{padding:5px 10px;border-radius:6px;cursor:pointer;font-size:11px;color:var(--r);font-weight:700;border-top:1px solid var(--border);margin-top:3px;text-align:center;}
+.msel-clear:hover{background:var(--rl);}
+
 .fsel{padding:7px 8px;border:1.5px solid var(--border);border-radius:8px;font-size:12px;outline:none;background:white;font-family:inherit;max-width:120px;}
 .fsel:focus{border-color:var(--p);}
 .cbadge{font-size:11px;color:var(--muted);white-space:nowrap;font-weight:700;}
@@ -404,7 +420,11 @@ tr.rInvalidNumber:hover{background:#FFE4E6;}
     <span class="tbadge b4" id="tb5">0</span>
     <span style="font-size:10px;margin-left:2px;opacity:.7">▼</span>
   </div>
-  <div style="flex:1"></div>
+  <div style="flex:1;overflow:hidden;position:relative;min-width:0">
+    <div id="tickerWrap" style="overflow:hidden;width:100%;padding:0 6px">
+      <div id="tickerText" style="white-space:nowrap;font-size:12px;font-weight:600;color:var(--slate);transition:opacity .4s;"></div>
+    </div>
+  </div>
   <button class="notif-btn" id="notifBtn" onclick="openNotifPanel()" title="Reminders">
     🔔 <span class="notif-badge" id="notifBadge" style="display:none">0</span>
   </button>
@@ -485,9 +505,18 @@ tr.rInvalidNumber:hover{background:#FFE4E6;}
     <div class="tbl-wrap">
       <div class="toolbar">
         <input class="sinp" type="text" placeholder="🔍 Naam ya phone..." id="all-srch" oninput="renderTab('all')">
-        <select class="fsel" id="all-sfil" onchange="renderTab('all')"><option value="">Sabhi Status</option></select>
-        <select class="fsel" id="all-pfil" onchange="renderTab('all')"><option value="">Sabhi Projects</option></select>
-        <select class="fsel" id="all-rfil" onchange="renderTab('all')"><option value="">Sabhi Ref By</option></select>
+        <div class="msel-wrap" id="msel-wrap-all-s">
+          <button class="msel-btn" id="msel-btn-all-s" onclick="toggleMsel('all','s',event)"><span class="msel-label" id="msel-lbl-all-s">Sabhi Status</span><span class="msel-arrow">▼</span></button>
+          <div class="msel-dd" id="msel-dd-all-s"></div>
+        </div>
+        <div class="msel-wrap" id="msel-wrap-all-p">
+          <button class="msel-btn" id="msel-btn-all-p" onclick="toggleMsel('all','p',event)"><span class="msel-label" id="msel-lbl-all-p">Sabhi Projects</span><span class="msel-arrow">▼</span></button>
+          <div class="msel-dd" id="msel-dd-all-p"></div>
+        </div>
+        <div class="msel-wrap" id="msel-wrap-all-r">
+          <button class="msel-btn" id="msel-btn-all-r" onclick="toggleMsel('all','r',event)"><span class="msel-label" id="msel-lbl-all-r">Sabhi Ref By</span><span class="msel-arrow">▼</span></button>
+          <div class="msel-dd" id="msel-dd-all-r"></div>
+        </div>
         <button class="btn-refresh" onclick="refreshTab('all')" title="Refresh">🔄</button>
         <span class="cbadge" id="all-cnt"></span>
       </div>
@@ -500,8 +529,8 @@ tr.rInvalidNumber:hover{background:#FFE4E6;}
     <div class="tbl-wrap">
       <div class="toolbar">
         <input class="sinp" type="text" placeholder="🔍 Naam ya phone..." id="fu-srch" oninput="renderTab('followup')">
-        <select class="fsel" id="fu-pfil" onchange="renderTab('followup')"><option value="">Sabhi Projects</option></select>
-        <select class="fsel" id="fu-rfil" onchange="renderTab('followup')"><option value="">Sabhi Ref By</option></select>
+        <div class="msel-wrap"><button class="msel-btn" id="msel-btn-fu-p" onclick="toggleMsel('fu','p',event)"><span class="msel-label" id="msel-lbl-fu-p">Sabhi Projects</span><span class="msel-arrow">▼</span></button><div class="msel-dd" id="msel-dd-fu-p"></div></div>
+        <div class="msel-wrap"><button class="msel-btn" id="msel-btn-fu-r" onclick="toggleMsel('fu','r',event)"><span class="msel-label" id="msel-lbl-fu-r">Sabhi Ref By</span><span class="msel-arrow">▼</span></button><div class="msel-dd" id="msel-dd-fu-r"></div></div>
         <button class="btn-refresh" onclick="refreshTab('followup')" title="Refresh">🔄</button>
         <span class="cbadge" id="fu-cnt"></span>
       </div>
@@ -514,8 +543,8 @@ tr.rInvalidNumber:hover{background:#FFE4E6;}
     <div class="tbl-wrap">
       <div class="toolbar">
         <input class="sinp" type="text" placeholder="🔍 Naam ya phone..." id="dp-srch" oninput="renderTab('demand')">
-        <select class="fsel" id="dp-pfil" onchange="renderTab('demand')"><option value="">Sabhi Projects</option></select>
-        <select class="fsel" id="dp-rfil" onchange="renderTab('demand')"><option value="">Sabhi Ref By</option></select>
+        <div class="msel-wrap"><button class="msel-btn" id="msel-btn-dp-p" onclick="toggleMsel('dp','p',event)"><span class="msel-label" id="msel-lbl-dp-p">Sabhi Projects</span><span class="msel-arrow">▼</span></button><div class="msel-dd" id="msel-dd-dp-p"></div></div>
+        <div class="msel-wrap"><button class="msel-btn" id="msel-btn-dp-r" onclick="toggleMsel('dp','r',event)"><span class="msel-label" id="msel-lbl-dp-r">Sabhi Ref By</span><span class="msel-arrow">▼</span></button><div class="msel-dd" id="msel-dd-dp-r"></div></div>
         <button class="btn-refresh" onclick="refreshTab('demand')" title="Refresh">🔄</button>
         <span class="cbadge" id="dp-cnt"></span>
       </div>
@@ -528,8 +557,8 @@ tr.rInvalidNumber:hover{background:#FFE4E6;}
     <div class="tbl-wrap">
       <div class="toolbar">
         <input class="sinp" type="text" placeholder="🔍 Naam ya phone..." id="cnp-srch" oninput="renderTab('cnp')">
-        <select class="fsel" id="cnp-pfil" onchange="renderTab('cnp')"><option value="">Sabhi Projects</option></select>
-        <select class="fsel" id="cnp-rfil" onchange="renderTab('cnp')"><option value="">Sabhi Ref By</option></select>
+        <div class="msel-wrap"><button class="msel-btn" id="msel-btn-cnp-p" onclick="toggleMsel('cnp','p',event)"><span class="msel-label" id="msel-lbl-cnp-p">Sabhi Projects</span><span class="msel-arrow">▼</span></button><div class="msel-dd" id="msel-dd-cnp-p"></div></div>
+        <div class="msel-wrap"><button class="msel-btn" id="msel-btn-cnp-r" onclick="toggleMsel('cnp','r',event)"><span class="msel-label" id="msel-lbl-cnp-r">Sabhi Ref By</span><span class="msel-arrow">▼</span></button><div class="msel-dd" id="msel-dd-cnp-r"></div></div>
         <button class="btn-refresh" onclick="refreshTab('cnp')" title="Refresh">🔄</button>
         <span class="cbadge" id="cnp-cnt"></span>
       </div>
@@ -542,8 +571,8 @@ tr.rInvalidNumber:hover{background:#FFE4E6;}
     <div class="tbl-wrap">
       <div class="toolbar">
         <input class="sinp" type="text" placeholder="🔍 Naam ya phone..." id="nl-srch" oninput="renderTab('newleads')">
-        <select class="fsel" id="nl-pfil" onchange="renderTab('newleads')"><option value="">Sabhi Projects</option></select>
-        <select class="fsel" id="nl-rfil" onchange="renderTab('newleads')"><option value="">Sabhi Ref By</option></select>
+        <div class="msel-wrap"><button class="msel-btn" id="msel-btn-nl-p" onclick="toggleMsel('nl','p',event)"><span class="msel-label" id="msel-lbl-nl-p">Sabhi Projects</span><span class="msel-arrow">▼</span></button><div class="msel-dd" id="msel-dd-nl-p"></div></div>
+        <div class="msel-wrap"><button class="msel-btn" id="msel-btn-nl-r" onclick="toggleMsel('nl','r',event)"><span class="msel-label" id="msel-lbl-nl-r">Sabhi Ref By</span><span class="msel-arrow">▼</span></button><div class="msel-dd" id="msel-dd-nl-r"></div></div>
         <button class="btn-refresh" onclick="refreshTab('newleads')" title="Refresh">🔄</button>
         <span class="cbadge" id="nl-cnt"></span>
       </div>
@@ -751,9 +780,10 @@ tr.rInvalidNumber:hover{background:#FFE4E6;}
       <!-- DETAILS TAB -->
       <div class="ptab-content active" id="ptab-details">
         <div class="profile-info-grid" id="profile-info-grid"></div>
-        <div style="margin-top:8px;display:flex;gap:10px;align-items:center">
+        <div style="margin-top:8px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
           <button class="profile-edit-btn" id="profile-edit-btn" onclick="openEditFromProfile()">✏️ Edit Details</button>
           <button class="profile-edit-btn" id="profile-delete-btn" onclick="deleteFromProfile()" style="background:linear-gradient(135deg,#EF4444,#DC2626)">🗑️ Delete</button>
+          <button class="profile-edit-btn" id="profile-copy-btn" onclick="copyProfileInfo()" title="Customer info copy karein" style="background:linear-gradient(135deg,#0891B2,#0E7490)">📋 Copy Info</button>
         </div>
       </div>
       <!-- NOTES TAB -->
@@ -1319,6 +1349,7 @@ function doUndo(){
 function refreshAll(){
   rdash();
   if(curTab!=='dashboard')renderTab(curTab);
+  startTicker();
 }
 
 // TODAY (constant)
@@ -1570,17 +1601,16 @@ function renderTab(tab){
   const q=srchEl?srchEl.value.toLowerCase():'';
 
   // When curFilter is set (from popup), ignore the dropdown sfil to avoid conflict
-  const sfil = (tab==='all' && curFilter==='all') ? (document.getElementById('all-sfil')||{value:''}).value : '';
-  const pfilEl=document.getElementById(`${pfx}-pfil`);
-  const rfilEl=document.getElementById(`${pfx}-rfil`);
-  const pfil=pfilEl?pfilEl.value:'';
-  const rfil=rfilEl?rfilEl.value:'';
+  const sfil_sel = (tab==='all' && curFilter==='all') ? getMselSelected('all','s') : new Set();
+  const pfx2=tab==='all'?'all':tab==='followup'?'fu':tab==='demand'?'dp':tab==='cnp'?'cnp':'nl';
+  const pfilSel = getMselSelected(pfx2,'p');
+  const rfilSel = getMselSelected(pfx2,'r');
 
   let data=leads.filter(l=>{
     if(sf&&l.Status!==sf)return false;
-    if(sfil&&l.Status!==sfil)return false;
-    if(pfil&&l.Project!==pfil)return false;
-    if(rfil&&l.Ref_By!==rfil)return false;
+    if(sfil_sel.size && !sfil_sel.has(l.Status))return false;
+    if(pfilSel.size && !pfilSel.has(l.Project))return false;
+    if(rfilSel.size && !rfilSel.has(l.Ref_By))return false;
     if(q&&!l.Name.toLowerCase().includes(q)&&!(l.Phone||'').includes(q))return false;
     return true;
   });
@@ -1727,10 +1757,9 @@ function refreshTab(tab){
   const pfx=tab==='all'?'all':tab==='followup'?'fu':tab==='demand'?'dp':tab==='cnp'?'cnp':'nl';
   const srch=document.getElementById(`${pfx}-srch`);
   if(srch)srch.value='';
-  const pf=document.getElementById(`${pfx}-pfil`);if(pf)pf.value='';
-  const rf=document.getElementById(`${pfx}-rfil`);if(rf)rf.value='';
+  // Clear multi-select states for this tab
+  ['p','r','s'].forEach(t=>{ mselState[getMselKey(pfx,t)] = new Set(); updateMselBtn(pfx,t); });
   if(tab==='all'){
-    const sf=document.getElementById('all-sfil');if(sf)sf.value='';
     // Reset filter popup selection back to "Sabhi Leads"
     curFilter='all';
     document.getElementById('mainTabLabel').textContent='📋 Sabhi Leads';
@@ -2430,20 +2459,7 @@ function rebuildDropdowns(){
   fs.innerHTML='';
   listStats.forEach(s=>{const o=document.createElement('option');o.value=s;o.textContent=s;if(s===curS)o.selected=true;fs.appendChild(o);});
 
-  // Filter dropdowns — all tabs (all, fu, dp, cnp, nl)
-  const tabPfxs=['all','fu','dp','cnp','nl'];
-  tabPfxs.forEach(pfx=>{
-    const pf=document.getElementById(`${pfx}-pfil`);
-    if(pf){const cv=pf.value;pf.innerHTML='<option value="">Sabhi Projects</option>';listProjs.forEach(p=>{const o=document.createElement('option');o.value=p;o.textContent=p;if(p===cv)o.selected=true;pf.appendChild(o);});}
-    const rf=document.getElementById(`${pfx}-rfil`);
-    if(rf){const cv=rf.value;rf.innerHTML='<option value="">Sabhi Ref By</option>';listRefs.forEach(r=>{const o=document.createElement('option');o.value=r;o.textContent=r;if(r===cv)o.selected=true;rf.appendChild(o);});}
-  });
-
-  // Status filter only for all tab
-  const sf=document.getElementById('all-sfil');
-  const curSF=sf.value;
-  sf.innerHTML='<option value="">Sabhi Status</option>';
-  listStats.forEach(s=>{const o=document.createElement('option');o.value=s;o.textContent=s;if(s===curSF)o.selected=true;sf.appendChild(o);});
+  // (Filter dropdowns are now multi-select custom — no rebuild needed for them)
 }
 
 document.getElementById('setmbg').addEventListener('click',e=>{if(e.target===e.currentTarget)closeSettings();});
@@ -2611,6 +2627,37 @@ function deleteFromProfile(){
     refreshAll();
     toast(`🗑️ ${l.Name} delete ho gaya!`);
   }, 150);
+}
+
+function copyProfileInfo(){
+  if(profileId===null) return;
+  const l = leads.find(x=>x.Sr===profileId);
+  if(!l) return;
+  const text = `👤 Naam: ${l.Name}\n📱 Phone: ${l.Phone||'—'}\n🏗️ Project: ${l.Project||'—'}\n📊 Status: ${l.Status}`;
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text).then(()=>{
+      toast('✅ Customer info copy ho gayi! Share kar sakte hain.');
+    }).catch(()=>{
+      _fallbackCopy(text);
+    });
+  } else {
+    _fallbackCopy(text);
+  }
+}
+
+function _fallbackCopy(text){
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.cssText='position:fixed;left:-9999px;top:-9999px;opacity:0;';
+  document.body.appendChild(ta);
+  ta.select();
+  try{
+    document.execCommand('copy');
+    toast('✅ Customer info copy ho gayi! Share kar sakte hain.');
+  } catch(e){
+    toast('Copy nahi hua, manually select karein.');
+  }
+  document.body.removeChild(ta);
 }
 
 // ===========================
@@ -2814,6 +2861,7 @@ async function startApp(){
 
   rdash();
   renderTab('all');
+  startTicker();
   loadReminders();
   updateReminderBadge();
   startReminderChecker();
@@ -3071,6 +3119,135 @@ function updateReminderBadge(){
   if(!badge) return;
   if(urgent>0){ badge.textContent=urgent; badge.style.display='block'; }
   else badge.style.display='none';
+}
+
+// ===========================
+// MULTI-SELECT FILTERS
+// ===========================
+// State: { tabPfx_type: Set<string> }
+const mselState = {};
+
+function getMselKey(pfx, type){ return pfx+'_'+type; }
+
+function getMselSelected(pfx, type){
+  const k = getMselKey(pfx, type);
+  return mselState[k] || new Set();
+}
+
+function toggleMsel(pfx, type, e){
+  e && e.stopPropagation();
+  const ddId = `msel-dd-${pfx}-${type}`;
+  const dd = document.getElementById(ddId);
+  if(!dd) return;
+  const isOpen = dd.classList.contains('open');
+  // Close all open msel dropdowns
+  document.querySelectorAll('.msel-dd.open').forEach(d=>d.classList.remove('open'));
+  if(isOpen) return;
+  // Build options
+  const items = type==='s' ? listStats : type==='p' ? listProjs : listRefs;
+  const sel = getMselSelected(pfx, type);
+  dd.innerHTML = items.map(v=>{
+    const checked = sel.has(v);
+    return `<label class="msel-opt ${checked?'checked':''}">
+      <input type="checkbox" ${checked?'checked':''} onclick="mselToggleItem('${pfx}','${type}','${v.replace(/'/g,"\\'")}',this)">
+      <span>${v}</span>
+    </label>`;
+  }).join('') + (sel.size ? `<div class="msel-clear" onclick="mselClear('${pfx}','${type}')">✕ Clear All</div>` : '');
+  dd.classList.add('open');
+}
+
+function mselToggleItem(pfx, type, val, chk){
+  const k = getMselKey(pfx, type);
+  if(!mselState[k]) mselState[k] = new Set();
+  if(chk.checked) mselState[k].add(val);
+  else mselState[k].delete(val);
+  updateMselBtn(pfx, type);
+  // Re-render options list to update checked states
+  toggleMsel(pfx, type); // close
+  toggleMsel(pfx, type); // re-open
+  const tabMap = {all:'all', fu:'followup', dp:'demand', cnp:'cnp', nl:'newleads'};
+  renderTab(tabMap[pfx]||pfx);
+}
+
+function mselClear(pfx, type){
+  const k = getMselKey(pfx, type);
+  mselState[k] = new Set();
+  updateMselBtn(pfx, type);
+  document.querySelectorAll('.msel-dd.open').forEach(d=>d.classList.remove('open'));
+  const tabMap = {all:'all', fu:'followup', dp:'demand', cnp:'cnp', nl:'newleads'};
+  renderTab(tabMap[pfx]||pfx);
+}
+
+function updateMselBtn(pfx, type){
+  const btn = document.getElementById(`msel-btn-${pfx}-${type}`);
+  const lbl = document.getElementById(`msel-lbl-${pfx}-${type}`);
+  if(!btn||!lbl) return;
+  const sel = getMselSelected(pfx, type);
+  const defaults = {s:'Sabhi Status', p:'Sabhi Projects', r:'Sabhi Ref By'};
+  if(sel.size===0){
+    lbl.textContent = defaults[type]||'Filter';
+    btn.classList.remove('active-filter');
+  } else if(sel.size===1){
+    lbl.textContent = [...sel][0];
+    btn.classList.add('active-filter');
+  } else {
+    lbl.textContent = sel.size+' selected';
+    btn.classList.add('active-filter');
+  }
+}
+
+// Close msel dropdowns when clicking outside
+document.addEventListener('click', e=>{
+  if(!e.target.closest('.msel-wrap'))
+    document.querySelectorAll('.msel-dd.open').forEach(d=>d.classList.remove('open'));
+});
+
+// ===========================
+// TODAY'S LEADS TICKER
+// ===========================
+let _tickerItems = [];
+let _tickerIdx = 0;
+let _tickerTimer = null;
+
+function buildTickerItems(){
+  const todayLeads = leads.filter(l=>l.Followup_Date===TODAY);
+  if(!todayLeads.length){
+    _tickerItems = [];
+    return;
+  }
+  _tickerItems = todayLeads.map(l=>{
+    const timeStr = l.Followup_Time ? ` ⏰${l.Followup_Time}` : '';
+    return `📌 ${l.Name}${timeStr} · ${l.Project||'—'} · ${l.Status}`;
+  });
+}
+
+function startTicker(){
+  clearInterval(_tickerTimer);
+  buildTickerItems();
+  if(!_tickerItems.length){
+    const el = document.getElementById('tickerText');
+    if(el) el.textContent = '';
+    return;
+  }
+  _tickerIdx = 0;
+  showTickerItem();
+  _tickerTimer = setInterval(()=>{
+    const el = document.getElementById('tickerText');
+    if(!el) return;
+    el.style.opacity = '0';
+    setTimeout(()=>{
+      _tickerIdx = (_tickerIdx + 1) % _tickerItems.length;
+      el.textContent = _tickerItems[_tickerIdx];
+      el.style.opacity = '1';
+    }, 400);
+  }, 10000);
+}
+
+function showTickerItem(){
+  const el = document.getElementById('tickerText');
+  if(!el || !_tickerItems.length) return;
+  el.textContent = _tickerItems[_tickerIdx];
+  el.style.opacity = '1';
 }
 
 // Check every minute — show alerts for due/overdue reminders
