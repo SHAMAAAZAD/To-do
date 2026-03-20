@@ -481,6 +481,7 @@ tr.rInvalidNumber:hover{background:#FFE4E6;}
       <div class="threedot-dd" id="threedotDd">
         <div class="threedot-item" onclick="doUndo();closeThreeDot()" id="undoMenuItem">↩ Undo</div>
         <div class="threedot-item" onclick="openSettings();closeThreeDot()">⚙️ Lists Manage</div>
+        <div class="threedot-item" onclick="manualFixDuplicateNames();closeThreeDot()">🔤 Duplicate Names Fix Karo</div>
         <div class="threedot-item" onclick="exportExcel();closeThreeDot()">📥 Excel Export</div>
         <div class="threedot-item" onclick="openImportModal();closeThreeDot()">📤 Upload Data</div>
         <div class="threedot-item" onclick="shareWithData();closeThreeDot()">💾 Save to File</div>
@@ -2049,10 +2050,87 @@ function openEdit(id){
   document.getElementById('mbg').classList.add('show');
 }
 function closeM(){document.getElementById('mbg').classList.remove('show');}
+
+// ===========================
+// AUTO-RENAME: Duplicate Name Handler
+// ===========================
+// Extracts base name and number suffix: "Rahul 2" → {base:"Rahul", n:2}
+function parseNameSuffix(name){
+  const m = name.match(/^(.*?)\s+(\d+)$/);
+  if(m) return {base: m[1].trim(), n: parseInt(m[2])};
+  return {base: name.trim(), n: 0};
+}
+
+// Given a desired name, returns a unique name not conflicting with excludeSr
+function getUniqueName(desiredName, excludeSr){
+  const {base} = parseNameSuffix(desiredName);
+  // Collect all current names (excluding the lead being edited)
+  const taken = new Set(
+    leads
+      .filter(l => excludeSr ? l.Sr !== excludeSr : true)
+      .map(l => (l.Name||'').trim().toLowerCase())
+  );
+  if(!taken.has(base.toLowerCase())) return base; // No conflict
+  // Find next available number
+  let n = 1;
+  while(taken.has((base + ' ' + n).toLowerCase())) n++;
+  return base + ' ' + n;
+}
+
+function manualFixDuplicateNames(){
+  const before = leads.map(l=>l.Name);
+  const changed = fixExistingDuplicateNames();
+  if(changed === 0){
+    toast('✅ Koi duplicate naam nahi mila — sab theek hai!');
+    return;
+  }
+  pushUndo('Duplicate names fix');
+  saveLeadsAndSync();
+  refreshAll();
+  toast(`✅ ${changed} duplicate naam${changed>1?'s':''} rename ho gaye!`, 3500);
+}
+
+// Fix all existing duplicate names in leads array (called once at startup)
+function fixExistingDuplicateNames(){
+  const seen = new Map(); // lowercase name → count
+  let changed = 0;
+  // Process in existing order so first entry keeps original name
+  leads.forEach(l => {
+    const orig = (l.Name||'').trim();
+    const {base} = parseNameSuffix(orig);
+    const key = base.toLowerCase();
+    if(!seen.has(key)){
+      seen.set(key, 1);
+      // If name has a suffix number that's unnecessary (only one), strip it
+      // Keep as-is for first occurrence
+    } else {
+      const count = seen.get(key) + 1;
+      seen.set(key, count);
+      // Find a unique name
+      const taken = new Set(leads.map(x => (x.Name||'').trim().toLowerCase()).filter(n => n !== orig.toLowerCase()));
+      let n = count;
+      while(taken.has((base + ' ' + n).toLowerCase())) n++;
+      const newName = base + ' ' + n;
+      if(newName !== orig){
+        l.Name = newName;
+        changed++;
+      }
+    }
+  });
+  return changed;
+}
+
 function saveL(){
   const nm=document.getElementById('fName').value.trim();
   if(!nm){toast('Name likhna zaroori hai!');return;}
-  const d={Name:nm,Phone:document.getElementById('fPhone').value.trim(),Project:document.getElementById('fProj').value,
+
+  // Auto-rename if duplicate name exists
+  const uniqueName = getUniqueName(nm, editId || null);
+  if(uniqueName !== nm){
+    toast(`ℹ️ "${nm}" pehle se hai → "${uniqueName}" rakha gaya`, 3500);
+  }
+
+  const d={Name:uniqueName,Phone:document.getElementById('fPhone').value.trim(),Project:document.getElementById('fProj').value,
     Status:document.getElementById('fStat').value,Ref_By:document.getElementById('fRef').value,
     Followup_Date:document.getElementById('fDate').value,Followup_Time:document.getElementById('fTime').value,
     Notes:document.getElementById('fNotes').value,
@@ -2066,7 +2144,7 @@ function saveL(){
     }
   }
   if(editId){
-    pushUndo(`${document.getElementById('fName').value.trim()} edit`);
+    pushUndo(`${nm} edit`);
     const i=leads.findIndex(l=>l.Sr===editId);leads[i]={...leads[i],...d};
     toast('Lead update ho gaya! ✅');
   } else {
@@ -3048,6 +3126,10 @@ async function startApp(){
     seenPhones.add(ph); return true;
   });
   if(leads.length < beforeCount){ saveLeadsAndSync(); }
+
+  // ── STEP 3b: Fix existing duplicate names ──
+  const nameFixed = fixExistingDuplicateNames();
+  if(nameFixed > 0){ saveLeadsAndSync(); }
   listProjs = loadList(LS_PROJS, DEFAULT_PROJS);
   listRefs  = loadList(LS_REFS,  DEFAULT_REFS);
   listStats = loadList(LS_STATLIST, DEFAULT_STATS);
