@@ -908,6 +908,27 @@ function setSyncDot(state, msg){
   el.textContent = ({ok:'🟢',err:'🔴',busy:'🔄'}[state]||'') + (msg?' '+msg:'');
 }
 
+// ── Helper: collect all profile notes into one object ──
+function getAllProfileNotes(){
+  const notes = {};
+  leads.forEach(l=>{
+    try{
+      const key = `crm_profile_notes_${l.Sr}`;
+      const v = localStorage.getItem(key);
+      if(v && v.trim()) notes[l.Sr] = v;
+    }catch(e){}
+  });
+  return notes;
+}
+
+// ── Helper: restore profile notes from synced object ──
+function applyProfileNotes(notesObj){
+  if(!notesObj) return;
+  Object.entries(notesObj).forEach(([sr,val])=>{
+    try{ localStorage.setItem(`crm_profile_notes_${sr}`, val); }catch(e){}
+  });
+}
+
 // ── PUSH: local → Firebase ──
 async function syncPush(){
   if(_syncing) return;
@@ -923,7 +944,10 @@ async function syncPush(){
         refs:  listRefs,
         stats: listStats,
         colors: statusColors
-      }
+      },
+      // Profile notes sync
+      profileNotes: getAllProfileNotes()
+      // Note: workedToday is synced separately via /workedToday/ Firebase node
     });
     const r = await fetch(FB_BASE+'.json', {
       method:'PUT', headers:{'Content-Type':'application/json'}, body
@@ -950,6 +974,12 @@ async function syncPull(force){
       comments = d.comments||{};
       _remoteTs = remTs;
       saveLeads(); saveComments();
+
+      // Restore profile notes
+      if(d.profileNotes) applyProfileNotes(d.profileNotes);
+
+      // Note: workedToday is now handled by its own Firebase node (/workedToday/DATE)
+      // via startWorkedPoller() — no need to merge here
 
       // Restore settings if present
       if(d.settings){
@@ -1000,6 +1030,12 @@ function startPoller(){
         comments = merged;
         _remoteTs = Number(d.ts||0);
         saveLeads(); saveComments();
+
+        // Restore profile notes from remote
+        if(d.profileNotes) applyProfileNotes(d.profileNotes);
+
+        // Note: workedToday handled by its own poller (startWorkedPoller)
+
         // Apply settings from Firebase
         if(d.settings){
           const s=d.settings;
@@ -1052,6 +1088,14 @@ async function forceSyncNow(){
     Object.entries(comments).forEach(([k,v])=>{
       if(!merged[k]||v.length>merged[k].length) merged[k]=v;
     });
+
+    // Merge profileNotes from both sides
+    const remNotes = d?.profileNotes||{};
+    const localNotes = getAllProfileNotes();
+    const mergedNotes = Object.assign({}, remNotes, localNotes); // local wins on conflict
+    applyProfileNotes(mergedNotes);
+
+    // Note: workedToday is handled by its own Firebase node via startWorkedPoller
 
     if(remN > locN){
       // Firebase has more leads
@@ -1640,6 +1684,111 @@ function getStatusColor(s){
   return statusColors[s] || {bg:'#F1F5F9', text:'#64748B'};
 }
 
+// ===========================
+// WORKED TODAY TRACKER — Firebase Real-Time
+// ===========================
+// In-memory store (source of truth = Firebase node: crmdata/workedToday)
+let _workedTodaySet = new Set(); // Sr numbers worked today (in-memory)
+let _workedPollerTimer = null;
+
+// Firebase node for workedToday (separate from main crmdata for instant updates)
+function _fbWorkedUrl(){
+  return FB_BASE.replace('/crmdata', '/workedToday') + '/' + TODAY + '.json';
+}
+
+// Load from Firebase into memory
+async function _loadWorkedFromFirebase(){
+  try{
+    const r = await fetch(_fbWorkedUrl() + '?r=' + Date.now(), {cache:'no-store'});
+    if(!r.ok) return;
+    const d = await r.json();
+    if(Array.isArray(d)){
+      _workedTodaySet = new Set(d.map(Number));
+    } else {
+      _workedTodaySet = new Set();
+    }
+  }catch(e){}
+}
+
+// Push in-memory set to Firebase instantly
+async function _pushWorkedToFirebase(){
+  try{
+    const arr = Array.from(_workedTodaySet);
+    await fetch(_fbWorkedUrl(), {
+      method:'PUT',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(arr)
+    });
+  }catch(e){}
+}
+
+// Clean old dates from Firebase workedToday node
+async function cleanOldWorkedData(){
+  _workedTodaySet = new Set(); // reset in-memory for today
+  try{
+    // Fetch all dates under /workedToday
+    const base = FB_BASE.replace('/crmdata', '/workedToday') + '.json?r=' + Date.now();
+    const r = await fetch(base, {cache:'no-store'});
+    if(!r.ok) return;
+    const d = await r.json();
+    if(!d || typeof d !== 'object') return;
+    // Delete any date that is not TODAY
+    const deletions = Object.keys(d)
+      .filter(dateKey => dateKey !== TODAY)
+      .map(dateKey => fetch(
+        FB_BASE.replace('/crmdata', '/workedToday') + '/' + dateKey + '.json',
+        {method:'DELETE'}
+      ));
+    await Promise.all(deletions);
+    // Load today's data into memory
+    if(d[TODAY] && Array.isArray(d[TODAY])){
+      _workedTodaySet = new Set(d[TODAY].map(Number));
+    }
+  }catch(e){}
+}
+
+// Mark a customer as worked today — instant Firebase push
+async function markWorkedToday(sr){
+  const srNum = Number(sr);
+  if(_workedTodaySet.has(srNum)) return; // already marked
+  _workedTodaySet.add(srNum);
+  // Re-render immediately so icon turns black on this device right away
+  if(curTab !== 'dashboard') renderTab(curTab);
+  // Push to Firebase instantly (other devices will pick it up via poller)
+  await _pushWorkedToFirebase();
+}
+
+// Check if a customer was worked on today (uses in-memory set)
+function isWorkedToday(sr){
+  return _workedTodaySet.has(Number(sr));
+}
+
+// Poller: check Firebase workedToday every 4 seconds for changes from other devices
+function startWorkedPoller(){
+  clearInterval(_workedPollerTimer);
+  _workedPollerTimer = setInterval(async()=>{
+    if(document.hidden) return;
+    try{
+      const r = await fetch(_fbWorkedUrl() + '?r=' + Date.now(), {cache:'no-store'});
+      if(!r.ok) return;
+      const d = await r.json();
+      if(!Array.isArray(d)) return;
+      const remote = new Set(d.map(Number));
+      // Check if remote has any Sr not in local
+      let changed = false;
+      remote.forEach(sr=>{ if(!_workedTodaySet.has(sr)){ _workedTodaySet.add(sr); changed=true; } });
+      if(changed && curTab !== 'dashboard') renderTab(curTab);
+    }catch(e){}
+  }, 4000);
+}
+
+// Helper stubs kept for syncPush compatibility (now no-ops / return empty)
+function _getWorkedData(){ return {[TODAY]: Array.from(_workedTodaySet)}; }
+function _saveWorkedData(data){
+  // Update in-memory from merged data object
+  if(data && data[TODAY]) _workedTodaySet = new Set(data[TODAY].map(Number));
+}
+
 // BADGE — now uses dynamic colors via inline style
 function bc(s){
   const c = getStatusColor(s);
@@ -1901,7 +2050,7 @@ function renderTab(tab){
       <td style="min-width:130px">
         <div style="display:flex;align-items:center;gap:5px">
           <div style="font-weight:800;font-size:13px;color:var(--text);cursor:pointer;flex:1" onclick="openComm(${l.Sr})" title="Comments dekhne ke liye click karen">${esc(l.Name)}${cmts.length?`<sup style="color:var(--p);font-size:9px;font-weight:800;margin-left:3px">💬${cmts.length}</sup>`:''}</div>
-          <span style="cursor:pointer;font-size:14px;opacity:.6;flex-shrink:0" onclick="openProfile(${l.Sr})" title="Customer Profile">👤</span>
+          <span style="cursor:pointer;font-size:14px;flex-shrink:0;${isWorkedToday(l.Sr)?'filter:grayscale(1) brightness(0);opacity:1;':'opacity:.6;'}" onclick="openProfile(${l.Sr})" title="${isWorkedToday(l.Sr)?'✅ Aaj kaam kiya':'Customer Profile'}">👤</span>
         </div>
         ${lastCmt?`<div style="font-size:10px;color:var(--slate);margin-top:2px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-style:italic" title="${esc(lastCmt)}">💬 ${esc(lastCmt)}</div>`:''}
       </td>
@@ -1962,6 +2111,7 @@ function editDate(span, sr){
       pushUndo(`${l.Name} ki date/time update`);
       l.Followup_Date=newDate;
       l.Followup_Time=newTime;
+      markWorkedToday(sr);
       saveLeadsAndSync(); refreshAll();
       toast(`📅 Date/Time update ho gayi: ${newDate}${newTime?' ⏰'+newTime:''}`);
     } else {
@@ -2146,6 +2296,7 @@ function saveL(){
   if(editId){
     pushUndo(`${nm} edit`);
     const i=leads.findIndex(l=>l.Sr===editId);leads[i]={...leads[i],...d};
+    markWorkedToday(editId);
     toast('Lead update ho gaya! ✅');
   } else {
     pushUndo('Naya lead add');
@@ -2221,6 +2372,7 @@ function saveCommentEdit(idx){
   const newText=inp.value.trim();
   if(!newText){toast('Comment khaali nahi ho sakta!');return;}
   comments[commId][idx].text=newText;
+  markWorkedToday(commId);
   saveCommentsAndSync();
   renderComments();
   if(curTab!=='dashboard')renderTab(curTab);
@@ -2235,6 +2387,7 @@ function saveComm(){
   const d=now.toISOString().slice(0,10);
   const t=now.toLocaleTimeString('hi-IN',{hour:'2-digit',minute:'2-digit',hour12:true});
   comments[commId].push({date:d,time:t,text:txt});
+  markWorkedToday(commId);
   saveCommentsAndSync();
   document.getElementById('comm-inp').value='';
   renderComments();
@@ -2814,6 +2967,7 @@ function _quickStatusPortal(sr, newStatus, e){
   if(l.Status===newStatus)return;
   pushUndo(`${l.Name} status: ${l.Status} → ${newStatus}`);
   l.Status=newStatus;
+  markWorkedToday(sr);
   saveLeadsAndSync();
   refreshAll();
   toast(`✅ Status: ${newStatus}`);
@@ -2911,6 +3065,7 @@ function saveProfileNotes(){
   const val = ta.value;
   const key = `crm_profile_notes_${profileId}`;
   dbSet(key, val);
+  markWorkedToday(profileId);
   toast('✅ Notes save ho gayi!');
   // Show a brief green border confirmation
   ta.style.borderColor='var(--g)';
@@ -3213,6 +3368,9 @@ async function startApp(){
       comments = merged;
       _remoteTs = fbTs;
       saveLeads(); saveComments();
+      // Restore profile notes from Firebase
+      if(fbData.profileNotes) applyProfileNotes(fbData.profileNotes);
+      // Note: workedToday loaded separately via cleanOldWorkedData() + startWorkedPoller()
       applyFBSettings(fbSettings);
       refreshAll(); rdash();
       setSyncDot('ok', leads.length+'✓');
@@ -3222,6 +3380,9 @@ async function startApp(){
       comments = merged;
       _remoteTs = fbTs;
       saveComments();
+      // Restore profile notes
+      if(fbData.profileNotes) applyProfileNotes(fbData.profileNotes);
+      // Note: workedToday loaded separately via cleanOldWorkedData() + startWorkedPoller()
       applyFBSettings(fbSettings);
       if(localCommentCount > fbCommentCount || !fbSettings){
         await syncPush();
@@ -3236,7 +3397,11 @@ async function startApp(){
   } catch(e){
     setSyncDot('err','offline');
   }
+  // Start main sync poller
   startPoller();
+  // Load today's worked data from Firebase, then start its own poller
+  await cleanOldWorkedData();
+  startWorkedPoller();
 }
 
 // ===========================
@@ -3612,6 +3777,7 @@ function startReminderChecker(){
 // ===========================
 // INIT
 // ===========================
+cleanOldWorkedData(); // async but fine to not await here — runs in background
 checkSession();
 </script>
 <!-- FIREBASE SYNC SETUP MODAL -->
