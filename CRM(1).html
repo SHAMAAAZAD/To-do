@@ -384,6 +384,37 @@ tr.rInvalidNumber:hover{background:#FFE4E6;}
     <div class="login-err" id="loginErr"></div>
     <button class="login-btn" onclick="doLogin()">🚀 Login Karo</button>
     <div class="login-hint">Naye user ke liye default password: <strong>0000</strong></div>
+    <div style="text-align:center;margin-top:12px">
+      <span onclick="openForgotPassword()" style="font-size:12px;color:#6366F1;font-weight:700;cursor:pointer;text-decoration:underline;text-underline-offset:2px">🔑 Password bhool gaye?</span>
+    </div>
+  </div>
+</div>
+
+<!-- FORGOT PASSWORD MODAL -->
+<div id="forgotPwdBg" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.6);z-index:1100;display:none;align-items:center;justify-content:center;backdrop-filter:blur(4px)">
+  <div style="background:white;border-radius:20px;padding:32px 28px;width:320px;max-width:92vw;box-shadow:0 24px 64px rgba(0,0,0,.35)">
+    <div style="text-align:center;margin-bottom:20px">
+      <span style="font-size:38px">🔑</span>
+      <div style="font-size:18px;font-weight:900;color:#0F172A;margin-top:8px">Password Reset</div>
+      <div style="font-size:12px;color:#94A3B8;margin-top:4px">Owner se request karo — woh aapka password reset karega</div>
+    </div>
+    <div id="fpwd-step1">
+      <div style="margin-bottom:12px">
+        <label style="font-size:10px;font-weight:800;color:#94A3B8;text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:5px">📱 Aapka Phone Number</label>
+        <input id="fpwd-phone" type="tel" placeholder="Apna registered phone daalen" maxlength="15" style="width:100%;padding:11px 13px;border:1.5px solid #E2E8F0;border-radius:10px;font-size:14px;font-family:inherit;outline:none;color:#0F172A;box-sizing:border-box">
+      </div>
+      <div style="margin-bottom:12px">
+        <label style="font-size:10px;font-weight:800;color:#94A3B8;text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:5px">🔒 Owner Password (Owner se poochho)</label>
+        <input id="fpwd-owner-pass" type="password" placeholder="Owner ka password daalen" maxlength="20" style="width:100%;padding:11px 13px;border:1.5px solid #E2E8F0;border-radius:10px;font-size:14px;font-family:inherit;outline:none;color:#0F172A;box-sizing:border-box">
+      </div>
+      <div style="margin-bottom:12px">
+        <label style="font-size:10px;font-weight:800;color:#94A3B8;text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:5px">🆕 Naya Password</label>
+        <input id="fpwd-new-pass" type="password" placeholder="Naya password set karo" maxlength="20" style="width:100%;padding:11px 13px;border:1.5px solid #E2E8F0;border-radius:10px;font-size:14px;font-family:inherit;outline:none;color:#0F172A;box-sizing:border-box">
+      </div>
+      <div id="fpwd-err" style="font-size:12px;color:#EF4444;font-weight:700;min-height:18px;margin-bottom:8px"></div>
+      <button onclick="doForgotPasswordReset()" style="width:100%;padding:12px;background:linear-gradient(135deg,#2563EB,#7C3AED);color:white;border:none;border-radius:10px;font-size:15px;font-weight:800;cursor:pointer;font-family:inherit;margin-bottom:10px">✅ Password Reset Karo</button>
+      <button onclick="closeForgotPassword()" style="width:100%;padding:10px;background:#F1F5F9;color:#64748B;border:none;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit">Cancel</button>
+    </div>
   </div>
 </div>
 
@@ -1108,6 +1139,46 @@ function doLogin(){
   startApp();
 }
 
+// ===========================
+// FORGOT PASSWORD
+// ===========================
+function openForgotPassword(){
+  document.getElementById('forgotPwdBg').style.display='flex';
+  document.getElementById('fpwd-phone').value='';
+  document.getElementById('fpwd-owner-pass').value='';
+  document.getElementById('fpwd-new-pass').value='';
+  document.getElementById('fpwd-err').textContent='';
+  setTimeout(()=>document.getElementById('fpwd-phone').focus(),100);
+}
+function closeForgotPassword(){
+  document.getElementById('forgotPwdBg').style.display='none';
+}
+function doForgotPasswordReset(){
+  const phone    = document.getElementById('fpwd-phone').value.trim().replace(/\s+/g,'');
+  const ownerPw  = document.getElementById('fpwd-owner-pass').value;
+  const newPass  = document.getElementById('fpwd-new-pass').value;
+  const errEl    = document.getElementById('fpwd-err');
+
+  if(!phone){ errEl.textContent='Phone number daalna zaroori hai!'; return; }
+  if(!ownerPw){ errEl.textContent='Owner ka password daalna zaroori hai!'; return; }
+  if(!newPass){ errEl.textContent='Naya password daalna zaroori hai!'; return; }
+  if(newPass.length < 4){ errEl.textContent='Password kam se kam 4 characters ka hona chahiye!'; return; }
+  if(ownerPw !== OWNER_PASS){ errEl.textContent='Owner ka password galat hai!'; return; }
+  if(phone === OWNER_PHONE){ errEl.textContent='Owner ka password yahan reset nahi ho sakta!'; return; }
+
+  // Reset the user's password
+  const users = getUsersDb();
+  users[phone] = newPass;
+  saveUsersDb(users);
+  closeForgotPassword();
+  // Pre-fill login
+  document.getElementById('loginPhone').value = phone;
+  document.getElementById('loginPass').value = '';
+  loginErr('');
+  toast('✅ Password reset ho gaya! Ab naye password se login karo.', 4000);
+  setTimeout(()=>document.getElementById('loginPass').focus(),300);
+}
+
 function doLogout(){
   if(!confirm('Logout karna chahte hain?')) return;
   currentUser = null;
@@ -1358,18 +1429,48 @@ function refreshAll(){
 const TODAY=new Date().toISOString().slice(0,10);
 
 // ===========================
+// ACTIVITY TRACKING — "Aaj kaam hua" indicator
+// ===========================
+// Jab manually koi change karo (status, comment, notes, date) to us lead ka
+// profile icon black ho jata hai. Sirf aaj ke din ke liye — next day normal.
+const ACTIVITY_KEY = 'crm_activity_' + TODAY; // auto-expires (naya din = naya key)
+
+let _activitySet = null;
+function _loadActivity(){
+  if(_activitySet) return _activitySet;
+  try{ _activitySet = new Set(JSON.parse(localStorage.getItem(ACTIVITY_KEY)||'[]')); }catch(e){ _activitySet=new Set(); }
+  return _activitySet;
+}
+function markActivity(sr){
+  const s = _loadActivity();
+  s.add(sr);
+  try{ localStorage.setItem(ACTIVITY_KEY, JSON.stringify([...s])); }catch(e){}
+  // Cleanup old activity keys (older than 2 days)
+  try{
+    const prefix = 'crm_activity_';
+    Object.keys(localStorage).forEach(k=>{
+      if(k.startsWith(prefix) && k !== ACTIVITY_KEY){
+        const d = k.slice(prefix.length);
+        if(d < TODAY) localStorage.removeItem(k);
+      }
+    });
+  }catch(e){}
+}
+function hasActivity(sr){
+  return _loadActivity().has(sr);
+}
+
+// ===========================
 // AUTO FOLLOWUP DATE SHIFT
 // ===========================
-// LOGIC:
-// Har roz jab app khule, wo leads jinki Followup_Date === TODAY (aaj) hain,
-// aur jinka lastShiftDate aaj se pehle ka hai — unhe kal ki date pe shift karo.
-// Matlab: aaj call nahi hui to kal show hogi. Kal nahi hui to parso. Aisi chain chalti rahe.
-//
-// IMPORTANT: Shift sirf aaj ki date wale leads ki hogi, past ki nahi.
-// Past wali already shift ho chuki hain (ya deliberately skip ki gayi hain).
-// Per lead apna lastShiftDate track karta hai taaki ek hi din mein dobara shift na ho.
+// LOGIC (Updated):
+// Har roz jab app khule:
+//   1. Past dates wali leads (date < TODAY) → aaj shift ho jayein (TODAY)
+//   2. Aaj ki date wali leads → kal shift ho jayein (TOMORROW)
+// Skip: Not Interested, Eligibility Issue, Sold Out (baaki sab shift hongi)
+// Guard: Ek din mein sirf ek baar shift (shiftLog se track)
 
-const AUTO_SHIFT_KEY = 'crm_shift_log'; // JSON: { "YYYY-MM-DD": true } — din jo shift ho chuke
+const AUTO_SHIFT_KEY = 'crm_shift_log';
 
 function getTomorrow(){
   const t = new Date();
@@ -1379,53 +1480,61 @@ function getTomorrow(){
 
 function autoShiftTodayFollowups(){
   try{
-    // Pehle check karo — aaj already shift ho chuki hai kya?
     let shiftLog = {};
     try{ shiftLog = JSON.parse(localStorage.getItem(AUTO_SHIFT_KEY)||'{}'); }catch(e){}
 
     if(shiftLog[TODAY]){
-      // Aaj already shift ho chuki — skip
-      return;
+      return; // Aaj already shift ho chuki
     }
 
     const tomorrowStr = getTomorrow();
-    const skipStatuses = ['Not Interested','Sold Out','Invalid Number','Switch Off','Demand Paid'];
+    // Sirf ye 3 statuses skip — baaki sab shift hongi
+    const skipStatuses = ['Not Interested','Eligibility Issue','Sold Out'];
 
-    let shifted = 0;
+    let shiftedPast = 0;   // past → today
+    let shiftedToday = 0;  // today → tomorrow
 
-    // Sirf wo leads jinki Followup_Date === TODAY hai aur status active hai
     leads.forEach(l => {
       if(skipStatuses.includes(l.Status)) return;
       if(!l.Followup_Date) return;
-      if(l.Followup_Date === TODAY){
+
+      if(l.Followup_Date < TODAY){
+        // Past date → aaj shift karo
+        l.Followup_Date = TODAY;
+        shiftedPast++;
+      } else if(l.Followup_Date === TODAY){
+        // Aaj ki date → kal shift karo
         l.Followup_Date = tomorrowStr;
-        shifted++;
+        shiftedToday++;
       }
     });
 
-    // Mark karo ki aaj shift ho gayi
+    // Mark today as shifted
     shiftLog[TODAY] = true;
-    // Purane logs clean karo (sirf last 7 din rakho)
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - 7);
     const cutoffStr = cutoff.toISOString().slice(0,10);
     Object.keys(shiftLog).forEach(d => { if(d < cutoffStr) delete shiftLog[d]; });
     localStorage.setItem(AUTO_SHIFT_KEY, JSON.stringify(shiftLog));
 
-    if(shifted > 0){
+    const total = shiftedPast + shiftedToday;
+    if(total > 0){
       saveLeadsAndSync();
       refreshAll();
-      toast(`📅 ${shifted} aaj ke follow-ups call nahi hue — kal (${tomorrowStr}) ke liye shift ho gaye!`, 5000);
+      let msg = `📅 Auto-shift: `;
+      if(shiftedPast > 0) msg += `${shiftedPast} purani leads → aaj`;
+      if(shiftedPast > 0 && shiftedToday > 0) msg += `, `;
+      if(shiftedToday > 0) msg += `${shiftedToday} aaj ki leads → kal (${tomorrowStr})`;
+      toast(msg, 5000);
     }
   } catch(e){ console.warn('Auto shift error:', e); }
 }
 
-// Manual trigger — settings ya koi button se call ho sake
+// Manual trigger
 function manualShiftReset(){
   try{
     let shiftLog = {};
     try{ shiftLog = JSON.parse(localStorage.getItem(AUTO_SHIFT_KEY)||'{}'); }catch(e){}
-    // Aaj ka lock hatao taaki dobara shift ho sake
     delete shiftLog[TODAY];
     localStorage.setItem(AUTO_SHIFT_KEY, JSON.stringify(shiftLog));
     autoShiftTodayFollowups();
@@ -1745,7 +1854,7 @@ function renderTab(tab){
       <td style="min-width:130px">
         <div style="display:flex;align-items:center;gap:5px">
           <div style="font-weight:800;font-size:13px;color:var(--text);cursor:pointer;flex:1" onclick="openComm(${l.Sr})" title="Comments dekhne ke liye click karen">${esc(l.Name)}${cmts.length?`<sup style="color:var(--p);font-size:9px;font-weight:800;margin-left:3px">💬${cmts.length}</sup>`:''}</div>
-          <span style="cursor:pointer;font-size:14px;opacity:.6;flex-shrink:0" onclick="openProfile(${l.Sr})" title="Customer Profile">👤</span>
+          <span style="cursor:pointer;font-size:14px;flex-shrink:0;${hasActivity(l.Sr)?'filter:brightness(0) saturate(0);opacity:1;':'opacity:.5;'}" onclick="openProfile(${l.Sr})" title="${hasActivity(l.Sr)?'✅ Aaj kaam hua':'Customer Profile'}">👤</span>
         </div>
         ${lastCmt?`<div style="font-size:10px;color:var(--slate);margin-top:2px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-style:italic" title="${esc(lastCmt)}">💬 ${linkifyPhones(lastCmt, l.Name)}</div>`:''}
       </td>
@@ -1820,6 +1929,7 @@ function editDate(span, sr){
       pushUndo(`${l.Name} ki date/time update`);
       l.Followup_Date=newDate;
       l.Followup_Time=newTime;
+      markActivity(sr); // 🖤 activity track
       saveLeadsAndSync(); refreshAll();
       toast(`📅 Date/Time update ho gayi: ${newDate}${newTime?' ⏰'+newTime:''}`);
     } else {
@@ -1927,6 +2037,7 @@ function saveL(){
   if(editId){
     pushUndo(`${document.getElementById('fName').value.trim()} edit`);
     const i=leads.findIndex(l=>l.Sr===editId);leads[i]={...leads[i],...d};
+    markActivity(editId); // 🖤 activity track
     toast('Lead update ho gaya! ✅');
   } else {
     pushUndo('Naya lead add');
@@ -2018,6 +2129,7 @@ function saveComm(){
   const d=now.toISOString().slice(0,10);
   const t=now.toLocaleTimeString('hi-IN',{hour:'2-digit',minute:'2-digit',hour12:true});
   comments[commId].push({date:d,time:t,text:txt});
+  markActivity(commId); // 🖤 activity track
   saveCommentsAndSync();
   document.getElementById('comm-inp').value='';
   renderComments();
@@ -2597,6 +2709,7 @@ function _quickStatusPortal(sr, newStatus, e){
   if(l.Status===newStatus)return;
   pushUndo(`${l.Name} status: ${l.Status} → ${newStatus}`);
   l.Status=newStatus;
+  markActivity(sr); // 🖤 activity track
   saveLeadsAndSync();
   refreshAll();
   toast(`✅ Status: ${newStatus}`);
@@ -2694,8 +2807,8 @@ function saveProfileNotes(){
   const val = ta.value;
   const key = `crm_profile_notes_${profileId}`;
   dbSet(key, val);
+  markActivity(profileId); // 🖤 activity track
   toast('✅ Notes save ho gayi!');
-  // Show a brief green border confirmation
   ta.style.borderColor='var(--g)';
   setTimeout(()=>ta.style.borderColor='var(--border)', 1500);
 }
