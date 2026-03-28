@@ -847,12 +847,18 @@ tr.rInvalidNumber:hover{background:#FFE4E6;}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script>
 // ===========================
-// FIREBASE — Single Source of Truth
+// FIREBASE — Smart Merge Sync
+// ===========================
+// Strategy:
+// - Har lead mein updatedAt timestamp hai
+// - Merge = dono sides ke leads leke jo bhi zyada recent hai woh rakho
+// - Koi lead delete nahi hota sirf count se — Sr se match hota hai
+// - Activity (black icon) bhi Firebase mein sync hoti hai
 // ===========================
 const FB_BASE = 'https://crm-sync-e9a51-default-rtdb.firebaseio.com/crmdata';
 let _syncing = false;
 let _polling = null;
-let _remoteTs = 0; // last known remote timestamp
+let _remoteTs = 0;
 
 function setSyncDot(state, msg){
   const el = document.getElementById('syncDot');
@@ -860,16 +866,74 @@ function setSyncDot(state, msg){
   el.textContent = ({ok:'🟢',err:'🔴',busy:'🔄'}[state]||'') + (msg?' '+msg:'');
 }
 
-// ── PUSH: local → Firebase ──
+// ── Har lead ko updatedAt stamp do agar nahi hai ──
+function stampLeads(arr){
+  const now = Date.now();
+  arr.forEach(l=>{ if(!l.updatedAt) l.updatedAt = now; });
+  return arr;
+}
+
+// ── Smart merge: local + remote leads — jo newer hai woh rakho ──
+function mergeLeads(local, remote){
+  const map = {};
+  // Pehle local daalo
+  local.forEach(l => { map[l.Sr] = {...l}; });
+  // Remote se compare — jo bhi newer ho woh jeet
+  remote.forEach(r => {
+    const existing = map[r.Sr];
+    if(!existing){
+      map[r.Sr] = {...r}; // naya lead from remote
+    } else {
+      const localTs = Number(existing.updatedAt||0);
+      const remoteTs = Number(r.updatedAt||0);
+      if(remoteTs > localTs) map[r.Sr] = {...r}; // remote newer — use remote
+      // else local newer — keep local (already in map)
+    }
+  });
+  // Array bana ke Sr se sort karo
+  return Object.values(map).sort((a,b)=>b.Sr-a.Sr);
+}
+
+// ── Merge comments: per-lead jiske paas zyada entries hon ──
+function mergeComments(local, remote){
+  const merged = {...remote};
+  Object.entries(local).forEach(([k,v])=>{
+    if(!merged[k] || v.length > merged[k].length) merged[k] = v;
+  });
+  return merged;
+}
+
+// ── Merge activity: union of both sets ──
+function mergeActivity(localArr, remoteArr){
+  const s = new Set([...(localArr||[]), ...(remoteArr||[])]);
+  return [...s];
+}
+
+// ── Get current activity for sync ──
+function getActivityForSync(){
+  try{ return JSON.parse(localStorage.getItem(ACTIVITY_KEY)||'[]'); }catch(e){ return []; }
+}
+
+// ── Apply activity from Firebase ──
+function applyActivityFromSync(arr){
+  if(!arr||!arr.length) return;
+  const current = new Set(getActivityForSync());
+  arr.forEach(sr => current.add(sr));
+  _activitySet = current;
+  try{ localStorage.setItem(ACTIVITY_KEY, JSON.stringify([...current])); }catch(e){}
+}
+
+// ── PUSH: local → Firebase (with timestamps) ──
 async function syncPush(){
   if(_syncing) return;
   _syncing = true;
   setSyncDot('busy','saving...');
   try{
     const ts = Date.now();
+    stampLeads(leads);
     const body = JSON.stringify({
       leads, comments, ts, n: leads.length,
-      // Settings sync
+      activity: { [TODAY]: getActivityForSync() },
       settings:{
         projs: listProjs,
         refs:  listRefs,
@@ -888,7 +952,7 @@ async function syncPush(){
   finally{ _syncing = false; }
 }
 
-// ── PULL: Firebase → local (always overwrite) ──
+// ── PULL: Firebase → local (smart merge) ──
 async function syncPull(force){
   setSyncDot('busy','...');
   try{
@@ -898,24 +962,14 @@ async function syncPull(force){
     if(!d||!d.leads||!d.leads.length){ setSyncDot('ok','empty'); return false; }
     const remTs = Number(d.ts||0);
     if(force || remTs > _remoteTs || d.leads.length !== leads.length){
-      leads = d.leads;
-      comments = d.comments||{};
+      leads = mergeLeads(leads, d.leads);
+      comments = mergeComments(comments, d.comments||{});
+      // Merge activity
+      const remAct = d.activity?.[TODAY]||[];
+      applyActivityFromSync(remAct);
       _remoteTs = remTs;
       saveLeads(); saveComments();
-
-      // Restore settings if present
-      if(d.settings){
-        const s = d.settings;
-        if(s.projs && s.projs.length){ listProjs = s.projs; saveList(LS_PROJS, listProjs); }
-        if(s.refs  && s.refs.length) { listRefs  = s.refs;  saveList(LS_REFS,  listRefs);  }
-        if(s.stats && s.stats.length){ listStats = s.stats; saveList(LS_STATLIST, listStats); }
-        if(s.colors && Object.keys(s.colors).length){
-          statusColors = s.colors;
-          saveStatusColors();
-        }
-        rebuildDropdowns();
-      }
-
+      if(d.settings) _applySettings(d.settings);
       setSyncDot('ok', leads.length+'✓');
       return true;
     }
@@ -924,51 +978,46 @@ async function syncPull(force){
   } catch(e){ setSyncDot('err','offline'); return false; }
 }
 
-// ── POLLER: check Firebase every 5 sec ──
+function _applySettings(s){
+  if(!s) return;
+  if(s.projs && s.projs.length){ listProjs=s.projs; saveList(LS_PROJS,listProjs); }
+  if(s.refs  && s.refs.length) { listRefs=s.refs;   saveList(LS_REFS,listRefs);   }
+  if(s.stats && s.stats.length){ listStats=s.stats; saveList(LS_STATLIST,listStats); }
+  if(s.colors && Object.keys(s.colors).length){ statusColors=s.colors; saveStatusColors(); }
+  rebuildDropdowns();
+}
+
+// ── POLLER: har 3 sec Firebase check ──
 function startPoller(){
   clearInterval(_polling);
   _polling = setInterval(async()=>{
-    if(document.hidden) return;
-    if(_syncing) return;
+    if(document.hidden || _syncing) return;
     try{
-      // Check remote timestamp
       const r = await fetch(FB_BASE+'/ts.json?r='+Date.now(), {cache:'no-store'});
       if(!r.ok) return;
       const remTs = Number(await r.json()||0);
       if(remTs > _remoteTs){
-        // Remote changed — pull full data and merge comments
         const fr = await fetch(FB_BASE+'.json?r='+Date.now(), {cache:'no-store'});
         if(!fr.ok) return;
         const d = await fr.json();
         if(!d||!d.leads||!d.leads.length) return;
-        
-        // Merge comments (keep more data from either side)
-        const merged = Object.assign({}, d.comments||{});
-        Object.entries(comments).forEach(([k,v])=>{
-          if(!merged[k]||v.length>merged[k].length) merged[k]=v;
-        });
-        
-        leads = d.leads;
-        comments = merged;
+        // Smart merge — offline wale local changes preserved
+        leads = mergeLeads(leads, d.leads);
+        comments = mergeComments(comments, d.comments||{});
+        // Merge activity from remote
+        const remAct = d.activity?.[TODAY]||[];
+        applyActivityFromSync(remAct);
         _remoteTs = Number(d.ts||0);
         saveLeads(); saveComments();
-        // Apply settings from Firebase
-        if(d.settings){
-          const s=d.settings;
-          if(s.projs&&s.projs.length){listProjs=s.projs;saveList(LS_PROJS,listProjs);}
-          if(s.refs&&s.refs.length){listRefs=s.refs;saveList(LS_REFS,listRefs);}
-          if(s.stats&&s.stats.length){listStats=s.stats;saveList(LS_STATLIST,listStats);}
-          if(s.colors&&Object.keys(s.colors).length){statusColors=s.colors;saveStatusColors();}
-          rebuildDropdowns();
-        }
+        if(d.settings) _applySettings(d.settings);
         refreshAll(); rdash();
         setSyncDot('ok', leads.length+'✓');
       }
     } catch(e){}
-  }, 3000); // every 3 seconds
+  }, 3000);
 }
 
-// ── AUTO-SAVE: called after every change ──
+// ── AUTO-SAVE ──
 function saveLeadsAndSync(){
   saveLeads();
   clearTimeout(window._pt);
@@ -980,66 +1029,35 @@ function saveCommentsAndSync(){
   window._pt2 = setTimeout(syncPush, 600);
 }
 
-// ── FORCE SYNC: manual button ──
+// ── FORCE SYNC (manual button) ──
 async function forceSyncNow(){
-  toast('🔄 Sync ho raha hai...');
+  toast('🔄 Smart merge sync ho raha hai...');
   try{
     const r = await fetch(FB_BASE+'.json?r='+Date.now(), {cache:'no-store'});
     const d = r.ok ? await r.json() : null;
-    const remN = d?.leads?.length||0;
-    const locN = leads.length;
-    const remComments = d?.comments||{};
-    const remCCount = Object.keys(remComments).length;
-    const locCCount = Object.keys(comments).length;
-
-    if(!remN){
-      // Firebase empty — push everything
+    if(!d||!d.leads||!d.leads.length){
       await syncPush();
-      toast('✅ '+locN+' leads + '+locCCount+' comments Firebase pe push ho gaye!');
+      toast('✅ Local data Firebase pe push ho gaya!');
       return;
     }
-
-    // Merge comments from both sides (take whichever has more per key)
-    const merged = {...remComments};
-    Object.entries(comments).forEach(([k,v])=>{
-      if(!merged[k]||v.length>merged[k].length) merged[k]=v;
-    });
-
-    if(remN > locN){
-      // Firebase has more leads
-      leads = d.leads;
-      comments = merged;
-      _remoteTs = Number(d.ts||0);
-      saveLeads(); saveComments();
-      await syncPush(); // push merged comments back
-      refreshAll(); rdash();
-      setSyncDot('ok',leads.length+'✓');
-      toast('✅ Firebase se '+leads.length+' leads + '+Object.keys(merged).length+' comments sync ho gaye!');
-    } else if(locN > remN){
-      // Local has more leads
-      comments = merged;
-      saveComments();
-      await syncPush();
-      toast('✅ Aapki '+locN+' leads + '+Object.keys(merged).length+' comments Firebase pe save ho gayi!');
-    } else {
-      // Same leads — just sync comments
-      comments = merged;
-      saveComments();
-      await syncPush();
-      refreshAll();
-      setSyncDot('ok',leads.length+'✓');
-      toast('✅ '+leads.length+' leads + '+Object.keys(merged).length+' comments sync ho gaye!');
-    }
+    // Smart merge both ways
+    leads = mergeLeads(leads, d.leads);
+    comments = mergeComments(comments, d.comments||{});
+    const remAct = d.activity?.[TODAY]||[];
+    applyActivityFromSync(remAct);
+    _remoteTs = Number(d.ts||0);
+    saveLeads(); saveComments();
+    if(d.settings) _applySettings(d.settings);
+    await syncPush(); // push merged result back
+    refreshAll(); rdash();
+    setSyncDot('ok', leads.length+'✓');
+    toast('✅ Smart merge complete! '+leads.length+' leads synced.');
   } catch(e){ setSyncDot('err','err'); toast('❌ '+e.message); }
 }
 
 // ── SYNC SETUP MODAL ──
-function openSyncSetup(){
-  document.getElementById('syncSetupmbg').classList.add('show');
-}
-function closeSyncSetup(){
-  document.getElementById('syncSetupmbg').classList.remove('show');
-}
+function openSyncSetup(){ document.getElementById('syncSetupmbg').classList.add('show'); }
+function closeSyncSetup(){ document.getElementById('syncSetupmbg').classList.remove('show'); }
 function saveSyncConfig(){ closeSyncSetup(); toast('Firebase already configured hai!'); }
 function disableSync(){ closeSyncSetup(); }
 function syncPush_compat(){ return syncPush(); }
@@ -1445,7 +1463,10 @@ function markActivity(sr){
   const s = _loadActivity();
   s.add(sr);
   try{ localStorage.setItem(ACTIVITY_KEY, JSON.stringify([...s])); }catch(e){}
-  // Cleanup old activity keys (older than 2 days)
+  // Sync activity to Firebase immediately
+  clearTimeout(window._actPushTimer);
+  window._actPushTimer = setTimeout(syncPush, 800);
+  // Cleanup old activity keys
   try{
     const prefix = 'crm_activity_';
     Object.keys(localStorage).forEach(k=>{
@@ -1929,6 +1950,7 @@ function editDate(span, sr){
       pushUndo(`${l.Name} ki date/time update`);
       l.Followup_Date=newDate;
       l.Followup_Time=newTime;
+      l.updatedAt = Date.now();
       markActivity(sr); // 🖤 activity track
       saveLeadsAndSync(); refreshAll();
       toast(`📅 Date/Time update ho gayi: ${newDate}${newTime?' ⏰'+newTime:''}`);
@@ -2036,13 +2058,14 @@ function saveL(){
   }
   if(editId){
     pushUndo(`${document.getElementById('fName').value.trim()} edit`);
-    const i=leads.findIndex(l=>l.Sr===editId);leads[i]={...leads[i],...d};
+    const i=leads.findIndex(l=>l.Sr===editId);
+    leads[i]={...leads[i],...d, updatedAt: Date.now()};
     markActivity(editId); // 🖤 activity track
     toast('Lead update ho gaya! ✅');
   } else {
     pushUndo('Naya lead add');
     const ns=leads.length?Math.max(...leads.map(l=>l.Sr))+1:1;
-    leads.unshift({Sr:ns,...d,Entry_Date:TODAY});toast('Naya lead add ho gaya! 🎉');
+    leads.unshift({Sr:ns,...d,Entry_Date:TODAY, updatedAt: Date.now()});toast('Naya lead add ho gaya! 🎉');
   }
   saveLeadsAndSync();closeM();refreshAll();
 }
@@ -2709,6 +2732,7 @@ function _quickStatusPortal(sr, newStatus, e){
   if(l.Status===newStatus)return;
   pushUndo(`${l.Name} status: ${l.Status} → ${newStatus}`);
   l.Status=newStatus;
+  l.updatedAt = Date.now();
   markActivity(sr); // 🖤 activity track
   saveLeadsAndSync();
   refreshAll();
@@ -3076,7 +3100,7 @@ async function startApp(){
   // Thodi der baad run karo taaki app pehle render ho jaye
   setTimeout(autoShiftTodayFollowups, 1500);
 
-  // ── FIREBASE SYNC ON STARTUP ──
+  // ── FIREBASE SYNC ON STARTUP — Smart Merge ──
   setSyncDot('busy','connecting...');
   try{
     const fbResp = await fetch(FB_BASE+'.json?r='+Date.now(), {cache:'no-store'});
@@ -3085,49 +3109,26 @@ async function startApp(){
     const fbComments = fbData?.comments || {};
     const fbSettings = fbData?.settings || null;
     const fbTs = Number(fbData?.ts||0);
-    const fbLeadCount = fbLeads.length;
-    const fbCommentCount = Object.keys(fbComments).length;
-    const localCommentCount = Object.keys(comments).length;
 
-    // Restore settings from Firebase if present
-    function applyFBSettings(s){
-      if(!s) return;
-      if(s.projs && s.projs.length){ listProjs=s.projs; saveList(LS_PROJS,listProjs); }
-      if(s.refs  && s.refs.length) { listRefs=s.refs;   saveList(LS_REFS,listRefs);   }
-      if(s.stats && s.stats.length){ listStats=s.stats; saveList(LS_STATLIST,listStats); }
-      if(s.colors && Object.keys(s.colors).length){ statusColors=s.colors; saveStatusColors(); }
-      rebuildDropdowns();
-    }
-
-    if(fbLeadCount === 0){
-      await syncPush(); // push local including settings
+    if(fbLeads.length === 0){
+      // Firebase empty — push everything local
+      stampLeads(leads);
+      await syncPush();
       setSyncDot('ok', leads.length+'✓');
-    } else if(fbLeadCount > leads.length){
-      leads = fbLeads;
-      const merged = {...comments};
-      Object.entries(fbComments).forEach(([k,v])=>{ if(!merged[k]||v.length>merged[k].length) merged[k]=v; });
-      comments = merged;
+    } else {
+      // Smart merge: local + Firebase — jo bhi lead newer ho woh rakho
+      leads = mergeLeads(leads, fbLeads);
+      comments = mergeComments(comments, fbComments);
+      // Merge activity from Firebase
+      const remAct = fbData?.activity?.[TODAY]||[];
+      applyActivityFromSync(remAct);
       _remoteTs = fbTs;
       saveLeads(); saveComments();
-      applyFBSettings(fbSettings);
+      if(fbSettings) _applySettings(fbSettings);
       refreshAll(); rdash();
       setSyncDot('ok', leads.length+'✓');
-    } else if(fbLeadCount === leads.length){
-      const merged = {...fbComments};
-      Object.entries(comments).forEach(([k,v])=>{ if(!merged[k]||v.length>merged[k].length) merged[k]=v; });
-      comments = merged;
-      _remoteTs = fbTs;
-      saveComments();
-      applyFBSettings(fbSettings);
-      if(localCommentCount > fbCommentCount || !fbSettings){
-        await syncPush();
-        setSyncDot('ok', leads.length+'✓');
-      } else {
-        setSyncDot('ok', leads.length+'✓');
-      }
-    } else {
-      await syncPush(); // local has more leads — push everything
-      setSyncDot('ok', leads.length+'✓');
+      // Push merged result back so Firebase is also complete
+      await syncPush();
     }
   } catch(e){
     setSyncDot('err','offline');
