@@ -1019,11 +1019,17 @@ function startPoller(){
         _remoteTs = Number(d.ts||0);
         saveLeads(); saveComments();
         if(d.settings) _applySettings(d.settings);
+        // If remote data already had shift applied, mark local shiftLog too
+        // so autoShift doesn't re-run on this device
+        try{
+          const sl = JSON.parse(localStorage.getItem(AUTO_SHIFT_KEY)||'{}');
+          if(!sl[TODAY]){ sl[TODAY]=true; localStorage.setItem(AUTO_SHIFT_KEY,JSON.stringify(sl)); }
+        }catch(e){}
         refreshAll(); rdash();
         setSyncDot('ok', leads.length+'✓');
       }
     } catch(e){}
-  }, 3000);
+  }, 2000); // har 2 sec Firebase check
 }
 
 // ── AUTO-SAVE ──
@@ -1532,15 +1538,17 @@ function autoShiftTodayFollowups(){
       if(l.Followup_Date < TODAY){
         // Past date → aaj shift karo
         l.Followup_Date = TODAY;
+        l.updatedAt = Date.now();
         shiftedPast++;
       } else if(l.Followup_Date === TODAY){
         // Aaj ki date → kal shift karo
         l.Followup_Date = tomorrowStr;
+        l.updatedAt = Date.now();
         shiftedToday++;
       }
     });
 
-    // Mark today as shifted
+    // Mark today as shifted — LOCALLY
     shiftLog[TODAY] = true;
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - 7);
@@ -1550,7 +1558,7 @@ function autoShiftTodayFollowups(){
 
     const total = shiftedPast + shiftedToday;
     if(total > 0){
-      saveLeadsAndSync();
+      saveLeadsAndSync(); // Firebase pe bhi push hoga — doosra device pull karega
       refreshAll();
       let msg = `📅 Auto-shift: `;
       if(shiftedPast > 0) msg += `${shiftedPast} purani leads → aaj`;
@@ -1832,22 +1840,13 @@ function renderTab(tab){
     return true;
   });
 
-  // Default sort: aaj sabse upar → phir kal → phir parso → future → overdue last
-  // Sr number as tiebreaker — ensures SAME numbering on ALL devices
-  data.sort((a,b)=>{
-    const ad=a.Followup_Date||'',bd=b.Followup_Date||'';
-    if(!ad&&!bd)return b.Sr-a.Sr; // no date: newest Sr first
-    if(!ad)return 1;if(!bd)return -1;
-    const ap=ad===TODAY?0:ad>TODAY?1:2;
-    const bp=bd===TODAY?0:bd>TODAY?1:2;
-    if(ap!==bp)return ap-bp;
-    if(ap===1){ const dc=ad.localeCompare(bd); return dc!==0?dc:b.Sr-a.Sr; }
-    if(ap===2){ const dc=bd.localeCompare(ad); return dc!==0?dc:b.Sr-a.Sr; }
-    return b.Sr-a.Sr; // same date: newer Sr first (stable tiebreaker)
-  });
-  if(sortState.col){
+  // Default sort: Sr number se — SAME order har device pe guaranteed
+  // (Date sort sirf tab hoga jab user column header pe click kare)
+  if(!sortState.col){
+    data.sort((a,b)=> b.Sr - a.Sr); // latest entry sabse upar
+  } else {
     const k=KEYS[sortState.col];
-    if(k)data.sort((a,b)=>{
+    if(k) data.sort((a,b)=>{
       const av=(a[k]||'').toLowerCase(),bv=(b[k]||'').toLowerCase();
       return sortState.dir==='asc'?av.localeCompare(bv):bv.localeCompare(av);
     });
@@ -3129,8 +3128,8 @@ async function startApp(){
   startReminderChecker();
 
   // ── AUTO SHIFT: Kal ke followups jo today nahi hue ──
-  // Thodi der baad run karo taaki app pehle render ho jaye
-  setTimeout(autoShiftTodayFollowups, 1500);
+  // Firebase sync ke BAAD chalta hai — taaki ek hi device pe shift ho aur dono sync mein rahe
+  // setTimeout removed — now runs after Firebase sync below
 
   // ── FIREBASE SYNC ON STARTUP — Smart Merge ──
   setSyncDot('busy','connecting...');
@@ -3145,18 +3144,26 @@ async function startApp(){
     if(fbLeads.length === 0){
       // Firebase empty — push everything local
       stampLeads(leads);
+      autoShiftTodayFollowups(); // shift karo pehle, phir push
       await syncPush();
       setSyncDot('ok', leads.length+'✓');
     } else {
       // Smart merge: local + Firebase — jo bhi lead newer ho woh rakho
       leads = mergeLeads(leads, fbLeads);
       comments = mergeComments(comments, fbComments);
+      // Merge global notes from Firebase
+      if(fbData?.globalNotes) mergeAndSaveGlobalNotes(fbData.globalNotes);
       // Merge activity from Firebase
       const remAct = fbData?.activity?.[TODAY]||[];
       applyActivityFromSync(remAct);
       _remoteTs = fbTs;
       saveLeads(); saveComments();
       if(fbSettings) _applySettings(fbSettings);
+      // Mark shiftLog so autoShift doesn't re-run after Firebase already has shifted data
+      try{
+        const sl = JSON.parse(localStorage.getItem(AUTO_SHIFT_KEY)||'{}');
+        if(!sl[TODAY]){ sl[TODAY]=true; localStorage.setItem(AUTO_SHIFT_KEY,JSON.stringify(sl)); }
+      }catch(e){}
       refreshAll(); rdash();
       setSyncDot('ok', leads.length+'✓');
       // Push merged result back so Firebase is also complete
