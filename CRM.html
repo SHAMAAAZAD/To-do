@@ -551,6 +551,7 @@ tr.rInvalidNumber:hover{background:#FFE4E6;}
           <div class="msel-dd" id="msel-dd-all-r"></div>
         </div>
         <button class="btn-refresh" onclick="refreshTab('all')" title="Refresh">🔄</button>
+        <button class="btn-refresh" onclick="openGlobalNotes()" title="Meri Notes" style="background:var(--wl);border-color:var(--w);color:#92400E;font-size:13px">📝 Notes</button>
         <span class="cbadge" id="all-cnt"></span>
       </div>
       <div class="tbl-scroll" id="ts-all"><table id="tbl-all"><thead></thead><tbody></tbody></table></div>
@@ -694,7 +695,10 @@ tr.rInvalidNumber:hover{background:#FFE4E6;}
     <div class="mbd">
       <div class="frow">
         <div class="fg"><label class="fl">नाम *</label><input class="fi" id="fName" placeholder="Customer naam"></div>
-        <div class="fg"><label class="fl">फ़ोन</label><input class="fi" id="fPhone" placeholder="98XXXXXXXX"></div>
+        <div class="fg"><label class="fl">फ़ोन</label>
+          <input class="fi" id="fPhone" placeholder="98XXXXXXXX" oninput="checkPhoneDuplicate(this)">
+          <div id="phoneDupWarn" style="display:none;margin-top:5px;background:#FEF2F2;border:1.5px solid #EF4444;border-radius:8px;padding:7px 10px;font-size:12px;font-weight:700;color:#991B1B;line-height:1.5"></div>
+        </div>
       </div>
       <div class="frow">
         <div class="fg"><label class="fl">Project</label><select class="fs" id="fProj"></select></div>
@@ -2039,7 +2043,24 @@ function openEdit(id){
   document.getElementById('fNotes').value=l.Notes||'';document.getElementById('fNext').value=l.Next_Step||'';
   document.getElementById('mbg').classList.add('show');
 }
-function closeM(){document.getElementById('mbg').classList.remove('show');}
+function closeM(){document.getElementById('mbg').classList.remove('show');document.getElementById('phoneDupWarn').style.display='none';document.getElementById('fPhone').style.borderColor='';}
+
+function checkPhoneDuplicate(inp){
+  const warn=document.getElementById('phoneDupWarn');
+  inp.style.borderColor='';
+  if(!inp.value.trim()){warn.style.display='none';return;}
+  const clean=inp.value.replace(/\D/g,'');
+  if(clean.length<6){warn.style.display='none';return;}
+  const dup=leads.find(l=>l.Phone&&l.Phone.replace(/\D/g,'')===clean&&(!editId||l.Sr!==editId));
+  if(dup){
+    inp.style.borderColor='var(--r)';
+    warn.innerHTML=`⚠️ Yeh number pehle se <b>"${esc(dup.Name)}"</b> ke naam se save hai!<br><span style="font-weight:600;color:var(--slate)">Project: ${esc(dup.Project||'—')} · Status: ${esc(dup.Status)}</span>`;
+    warn.style.display='block';
+  } else {
+    inp.style.borderColor='var(--g)';
+    warn.style.display='none';
+  }
+}
 function saveL(){
   const nm=document.getElementById('fName').value.trim();
   if(!nm){toast('Name likhna zaroori hai!');return;}
@@ -2053,7 +2074,10 @@ function saveL(){
     const cleanNew=d.Phone.replace(/\D/g,'');
     const dup=cleanNew?leads.find(l=>l.Phone&&l.Phone.replace(/\D/g,'')===cleanNew):null;
     if(dup){
-      if(!confirm(`⚠️ Yeh phone number (${d.Phone}) pehle se "${dup.Name}" ke naam se entry ho rakha hai!\n\nKya phir bhi naya lead add karna chahte hain?`)){return;}
+      toast(`⛔ Yeh number pehle se "${dup.Name}" ke naam se save hai! Duplicate entry nahi hogi.`, 5000);
+      document.getElementById('fPhone').style.borderColor='var(--r)';
+      document.getElementById('fPhone').focus();
+      return;
     }
   }
   if(editId){
@@ -3541,6 +3565,145 @@ checkSession();
     </div>
   </div>
 </div>
+
+<!-- GLOBAL NOTES MODAL -->
+<div class="mbg" id="globalNotesMbg" onclick="if(event.target===this)closeGlobalNotes()">
+  <div class="modal" style="width:560px;max-height:90vh;display:flex;flex-direction:column">
+    <div class="mhd" style="flex-shrink:0">
+      <h2>📝 Meri Personal Notes</h2>
+      <div style="display:flex;gap:8px;align-items:center">
+        <select id="gnSortSel" onchange="renderGlobalNotes()" style="padding:5px 9px;border:1.5px solid var(--border);border-radius:7px;font-size:12px;font-family:inherit;outline:none;cursor:pointer">
+          <option value="newest">🔽 Newest First</option>
+          <option value="oldest">🔼 Oldest First</option>
+        </select>
+        <button class="mcl" onclick="closeGlobalNotes()">✕</button>
+      </div>
+    </div>
+    <div class="mbd" style="flex:1;overflow-y:auto;padding:14px 20px">
+      <!-- Add new note -->
+      <div style="background:var(--wl);border:1.5px solid var(--w);border-radius:12px;padding:14px;margin-bottom:16px">
+        <div style="font-size:11px;font-weight:800;color:#92400E;text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px">✏️ Naya Note Likhein</div>
+        <textarea id="gnInp" placeholder="Kuch important likh lo yahan..." style="width:100%;min-height:80px;border:1.5px solid var(--w);border-radius:9px;padding:10px 12px;font-size:13px;font-family:inherit;outline:none;resize:vertical;line-height:1.6;background:white;color:var(--text)"></textarea>
+        <div style="margin-top:8px;display:flex;gap:8px;justify-content:flex-end">
+          <input type="date" id="gnDate" style="padding:6px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:12px;font-family:inherit;outline:none" title="Is note ko is date pe pin karo">
+          <button onclick="saveGlobalNote()" style="background:linear-gradient(135deg,#F59E0B,#D97706);color:white;border:none;padding:8px 18px;border-radius:9px;font-size:13px;font-weight:800;cursor:pointer;font-family:inherit">💾 Save Note</button>
+        </div>
+      </div>
+      <!-- Notes list -->
+      <div id="gnList"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ===========================
+// GLOBAL NOTES
+// ===========================
+function loadGlobalNotes(){try{return JSON.parse(localStorage.getItem('crm_global_notes_v1')||'[]');}catch(e){return[];}}
+function saveGlobalNotesList(arr){try{localStorage.setItem('crm_global_notes_v1',JSON.stringify(arr));}catch(e){}}
+
+function openGlobalNotes(){
+  // Set today's date as default
+  const d=document.getElementById('gnDate');
+  if(d&&!d.value)d.value=TODAY;
+  renderGlobalNotes();
+  document.getElementById('globalNotesMbg').classList.add('show');
+  setTimeout(()=>document.getElementById('gnInp').focus(),100);
+}
+function closeGlobalNotes(){document.getElementById('globalNotesMbg').classList.remove('show');}
+
+function renderGlobalNotes(){
+  const notes=loadGlobalNotes();
+  const sort=document.getElementById('gnSortSel').value;
+  const sorted=[...notes].sort((a,b)=>{
+    // Primary: date (if set), Secondary: created timestamp
+    const da=a.date||'',db=b.date||'';
+    const ta=a.ts||0,tb=b.ts||0;
+    if(sort==='newest'){
+      if(da&&db&&da!==db)return db.localeCompare(da);
+      if(da&&!db)return -1;if(!da&&db)return 1;
+      return tb-ta;
+    } else {
+      if(da&&db&&da!==db)return da.localeCompare(db);
+      if(da&&!db)return 1;if(!da&&db)return -1;
+      return ta-tb;
+    }
+  });
+  const list=document.getElementById('gnList');
+  if(!sorted.length){list.innerHTML='<div style="text-align:center;padding:32px;color:var(--muted);font-size:14px">📭 Abhi koi note nahi hai.<br>Upar se naya note add karo!</div>';return;}
+  list.innerHTML=sorted.map((n,i)=>{
+    const origIdx=notes.indexOf(n);
+    const dateLabel=n.date?`<span style="background:var(--pb);color:var(--p);padding:2px 8px;border-radius:10px;font-size:11px;font-weight:800;margin-right:6px">📅 ${n.date}</span>`:'';
+    return `<div style="background:white;border:1.5px solid var(--border);border-radius:12px;padding:13px 15px;margin-bottom:10px;position:relative" id="gnote-${origIdx}">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:7px;flex-wrap:wrap;gap:4px">
+        <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">
+          ${dateLabel}
+          <span style="font-size:10px;color:var(--muted);font-weight:600">🕐 ${n.timeStr||''}</span>
+        </div>
+        <div style="display:flex;gap:5px">
+          <button onclick="editGlobalNote(${origIdx})" style="background:none;border:none;cursor:pointer;color:var(--p);font-size:13px;padding:3px 7px;border-radius:6px;font-family:inherit" title="Edit" onmouseover="this.style.background='var(--pl)'" onmouseout="this.style.background='none'">✏️</button>
+          <button onclick="deleteGlobalNote(${origIdx})" style="background:none;border:none;cursor:pointer;color:var(--r);font-size:13px;padding:3px 7px;border-radius:6px;font-family:inherit" title="Delete" onmouseover="this.style.background='var(--rl)'" onmouseout="this.style.background='none'">🗑️</button>
+        </div>
+      </div>
+      <div id="gntext-${origIdx}" style="font-size:13px;line-height:1.65;color:var(--text);white-space:pre-wrap">${esc(n.text)}</div>
+    </div>`;
+  }).join('');
+}
+
+function saveGlobalNote(){
+  const txt=document.getElementById('gnInp').value.trim();
+  if(!txt){toast('Note khaali nahi ho sakta!');return;}
+  const notes=loadGlobalNotes();
+  const now=new Date();
+  const timeStr=now.toLocaleString('hi-IN',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit',hour12:true});
+  notes.push({text:txt,date:document.getElementById('gnDate').value||'',ts:Date.now(),timeStr});
+  saveGlobalNotesList(notes);
+  document.getElementById('gnInp').value='';
+  document.getElementById('gnDate').value=TODAY;
+  renderGlobalNotes();
+  toast('Note save ho gaya! 📝');
+}
+
+function deleteGlobalNote(idx){
+  if(!confirm('Yeh note delete karna chahte hain?'))return;
+  const notes=loadGlobalNotes();
+  notes.splice(idx,1);
+  saveGlobalNotesList(notes);
+  renderGlobalNotes();
+  toast('Note delete ho gaya! 🗑️');
+}
+
+function editGlobalNote(idx){
+  const notes=loadGlobalNotes();
+  if(!notes[idx])return;
+  const textEl=document.getElementById(`gntext-${idx}`);
+  const noteEl=document.getElementById(`gnote-${idx}`);
+  if(!textEl||!noteEl)return;
+  textEl.innerHTML=`<textarea id="gnedit-${idx}" style="width:100%;min-height:80px;border:1.5px solid var(--p);border-radius:8px;padding:9px 11px;font-size:13px;font-family:inherit;outline:none;resize:vertical;line-height:1.6">${notes[idx].text}</textarea>
+  <div style="display:flex;gap:7px;margin-top:7px;align-items:center">
+    <input type="date" id="gnedit-date-${idx}" value="${notes[idx].date||''}" style="padding:5px 9px;border:1.5px solid var(--border);border-radius:7px;font-size:12px;font-family:inherit;outline:none">
+    <button onclick="saveGlobalNoteEdit(${idx})" style="background:var(--p);color:white;border:none;padding:7px 16px;border-radius:8px;font-size:12px;font-weight:800;cursor:pointer;font-family:inherit">✓ Save</button>
+    <button onclick="renderGlobalNotes()" style="background:var(--bg);border:1.5px solid var(--border);color:var(--text);padding:7px 14px;border-radius:8px;font-size:12px;cursor:pointer;font-family:inherit">✕ Cancel</button>
+  </div>`;
+  const ta=document.getElementById(`gnedit-${idx}`);
+  if(ta){ta.focus();ta.setSelectionRange(ta.value.length,ta.value.length);}
+}
+
+function saveGlobalNoteEdit(idx){
+  const ta=document.getElementById(`gnedit-${idx}`);
+  const dateInp=document.getElementById(`gnedit-date-${idx}`);
+  if(!ta)return;
+  const newText=ta.value.trim();
+  if(!newText){toast('Note khaali nahi ho sakta!');return;}
+  const notes=loadGlobalNotes();
+  notes[idx].text=newText;
+  if(dateInp)notes[idx].date=dateInp.value||'';
+  saveGlobalNotesList(notes);
+  renderGlobalNotes();
+  toast('Note update ho gaya! ✅');
+}
+document.getElementById('gnInp').addEventListener('keydown',e=>{if(e.ctrlKey&&e.key==='Enter')saveGlobalNote();});
+</script>
 
 </body>
 </html>
