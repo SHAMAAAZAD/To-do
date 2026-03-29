@@ -938,6 +938,7 @@ async function syncPush(){
     const body = JSON.stringify({
       leads, comments, ts, n: leads.length,
       activity: { [TODAY]: getActivityForSync() },
+      globalNotes: (typeof loadGlobalNotes==='function'?loadGlobalNotes():[]),
       settings:{
         projs: listProjs,
         refs:  listRefs,
@@ -965,9 +966,11 @@ async function syncPull(force){
     const d = await r.json();
     if(!d||!d.leads||!d.leads.length){ setSyncDot('ok','empty'); return false; }
     const remTs = Number(d.ts||0);
-    if(force || remTs > _remoteTs || d.leads.length !== leads.length){
+    if(force || remTs > _remoteTs){
       leads = mergeLeads(leads, d.leads);
       comments = mergeComments(comments, d.comments||{});
+      // Merge global notes
+      if(d.globalNotes) mergeAndSaveGlobalNotes(d.globalNotes);
       // Merge activity
       const remAct = d.activity?.[TODAY]||[];
       applyActivityFromSync(remAct);
@@ -1008,6 +1011,8 @@ function startPoller(){
         // Smart merge — offline wale local changes preserved
         leads = mergeLeads(leads, d.leads);
         comments = mergeComments(comments, d.comments||{});
+        // Merge global notes from remote
+        if(d.globalNotes) mergeAndSaveGlobalNotes(d.globalNotes);
         // Merge activity from remote
         const remAct = d.activity?.[TODAY]||[];
         applyActivityFromSync(remAct);
@@ -1047,6 +1052,7 @@ async function forceSyncNow(){
     // Smart merge both ways
     leads = mergeLeads(leads, d.leads);
     comments = mergeComments(comments, d.comments||{});
+    if(d.globalNotes) mergeAndSaveGlobalNotes(d.globalNotes);
     const remAct = d.activity?.[TODAY]||[];
     applyActivityFromSync(remAct);
     _remoteTs = Number(d.ts||0);
@@ -1827,15 +1833,17 @@ function renderTab(tab){
   });
 
   // Default sort: aaj sabse upar → phir kal → phir parso → future → overdue last
+  // Sr number as tiebreaker — ensures SAME numbering on ALL devices
   data.sort((a,b)=>{
     const ad=a.Followup_Date||'',bd=b.Followup_Date||'';
-    if(!ad&&!bd)return 0;if(!ad)return 1;if(!bd)return -1;
+    if(!ad&&!bd)return b.Sr-a.Sr; // no date: newest Sr first
+    if(!ad)return 1;if(!bd)return -1;
     const ap=ad===TODAY?0:ad>TODAY?1:2;
     const bp=bd===TODAY?0:bd>TODAY?1:2;
     if(ap!==bp)return ap-bp;
-    if(ap===1)return ad.localeCompare(bd);
-    if(ap===2)return bd.localeCompare(ad);
-    return 0;
+    if(ap===1){ const dc=ad.localeCompare(bd); return dc!==0?dc:b.Sr-a.Sr; }
+    if(ap===2){ const dc=bd.localeCompare(ad); return dc!==0?dc:b.Sr-a.Sr; }
+    return b.Sr-a.Sr; // same date: newer Sr first (stable tiebreaker)
   });
   if(sortState.col){
     const k=KEYS[sortState.col];
@@ -3600,7 +3608,23 @@ checkSession();
 // GLOBAL NOTES
 // ===========================
 function loadGlobalNotes(){try{return JSON.parse(localStorage.getItem('crm_global_notes_v1')||'[]');}catch(e){return[];}}
-function saveGlobalNotesList(arr){try{localStorage.setItem('crm_global_notes_v1',JSON.stringify(arr));}catch(e){}}
+function saveGlobalNotesList(arr){
+  try{localStorage.setItem('crm_global_notes_v1',JSON.stringify(arr));}catch(e){}
+  // Firebase sync
+  clearTimeout(window._gnPushTimer);
+  window._gnPushTimer = setTimeout(syncPush, 800);
+}
+
+// Merge remote global notes with local — keep all unique notes by ts
+function mergeAndSaveGlobalNotes(remote){
+  if(!remote||!remote.length) return;
+  const local=loadGlobalNotes();
+  const map={};
+  local.forEach(n=>{ map[n.ts]=n; });
+  remote.forEach(n=>{ if(!map[n.ts]) map[n.ts]=n; }); // add new ones from remote
+  const merged=Object.values(map).sort((a,b)=>b.ts-a.ts);
+  try{localStorage.setItem('crm_global_notes_v1',JSON.stringify(merged));}catch(e){}
+}
 
 function openGlobalNotes(){
   // Set today's date as default
