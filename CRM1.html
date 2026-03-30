@@ -550,6 +550,15 @@ tr.rInvalidNumber:hover{background:#FFE4E6;}
           <button class="msel-btn" id="msel-btn-all-r" onclick="toggleMsel('all','r',event)"><span class="msel-label" id="msel-lbl-all-r">Sabhi Ref By</span><span class="msel-arrow">▼</span></button>
           <div class="msel-dd" id="msel-dd-all-r"></div>
         </div>
+        <select class="fsel" id="sortBySelect" onchange="setSortBy(this.value)" title="Data sort karein" style="font-weight:700;min-width:115px;border-color:var(--border)">
+          <option value="smart">📅 Smart Sort</option>
+          <option value="date_asc">📆 Date ↑ Asc</option>
+          <option value="date_desc">📆 Date ↓ Desc</option>
+          <option value="name_asc">🔤 Naam A-Z</option>
+          <option value="name_desc">🔤 Naam Z-A</option>
+          <option value="sr_desc">🆕 Latest First</option>
+          <option value="sr_asc">🔢 Oldest First</option>
+        </select>
         <button class="btn-refresh" onclick="refreshTab('all')" title="Refresh">🔄</button>
         <button class="btn-refresh" onclick="openGlobalNotes()" title="Meri Notes" style="background:var(--wl);border-color:var(--w);color:#92400E;font-size:13px">📝 Notes</button>
         <span class="cbadge" id="all-cnt"></span>
@@ -943,7 +952,8 @@ async function syncPush(){
         projs: listProjs,
         refs:  listRefs,
         stats: listStats,
-        colors: statusColors
+        colors: statusColors,
+        sortByPref: sortByPref
       }
     });
     const r = await fetch(FB_BASE+'.json', {
@@ -991,6 +1001,12 @@ function _applySettings(s){
   if(s.refs  && s.refs.length) { listRefs=s.refs;   saveList(LS_REFS,listRefs);   }
   if(s.stats && s.stats.length){ listStats=s.stats; saveList(LS_STATLIST,listStats); }
   if(s.colors && Object.keys(s.colors).length){ statusColors=s.colors; saveStatusColors(); }
+  if(s.sortByPref){
+    sortByPref = s.sortByPref;
+    try{ localStorage.setItem(LS_SORT_PREF, sortByPref); }catch(e){}
+    const sel = document.getElementById('sortBySelect');
+    if(sel) sel.value = sortByPref;
+  }
   rebuildDropdowns();
 }
 
@@ -1439,6 +1455,51 @@ let commId=null;
 let sortState={col:null,dir:'asc'};
 let colFilters={};
 
+// ── SORT PREFERENCE (persists across devices via Firebase) ──
+const LS_SORT_PREF = 'crm_sort_pref_v1';
+let sortByPref = 'smart'; // default: smart sort (today top, cal next, rest asc)
+
+function loadSortPref(){
+  try{ const v=localStorage.getItem(LS_SORT_PREF); if(v) sortByPref=v; }catch(e){}
+}
+function saveSortPref(val){
+  sortByPref = val;
+  try{ localStorage.setItem(LS_SORT_PREF, val); }catch(e){}
+  // Sync to Firebase via settings push
+  clearTimeout(window._sortPrefTimer);
+  window._sortPrefTimer = setTimeout(syncPush, 800);
+}
+function setSortBy(val){
+  saveSortPref(val);
+  renderTab(curTab);
+  toast('✅ Sort change ho gaya! Sab devices pe apply hoga.');
+}
+function applyStoredSortPref(){
+  loadSortPref();
+  const sel = document.getElementById('sortBySelect');
+  if(sel) sel.value = sortByPref;
+}
+
+// Smart sort: Aaj TOP → Kal (tomorrow) NEXT → Rest ascending by date
+function smartSort(a, b){
+  const TOMORROW = getTomorrow();
+  const da = a.Followup_Date || '';
+  const db = b.Followup_Date || '';
+  // Priority ranks: today=0, tomorrow=1, future=2, no-date=3, past=4
+  function rank(d){
+    if(!d) return 3;
+    if(d === TODAY) return 0;
+    if(d === TOMORROW) return 1;
+    if(d > TODAY) return 2;
+    return 4; // past dates (shouldn't happen due to auto-shift but just in case)
+  }
+  const ra = rank(da), rb = rank(db);
+  if(ra !== rb) return ra - rb;
+  // Within same group, sort ascending by date, then by Sr desc
+  if(da !== db) return da.localeCompare(db);
+  return b.Sr - a.Sr;
+}
+
 // UNDO STACK (max 20 steps)
 let undoStack=[];
 function pushUndo(desc){
@@ -1840,10 +1901,30 @@ function renderTab(tab){
     return true;
   });
 
-  // Default sort: Sr number se — SAME order har device pe guaranteed
-  // (Date sort sirf tab hoga jab user column header pe click kare)
+  // Default sort: sortByPref se — persists across devices
+  // (Column header click se sortState override hota hai)
   if(!sortState.col){
-    data.sort((a,b)=> b.Sr - a.Sr); // latest entry sabse upar
+    if(sortByPref === 'smart'){
+      data.sort(smartSort);
+    } else if(sortByPref === 'date_asc'){
+      data.sort((a,b)=>{
+        const da=a.Followup_Date||'9999', db=b.Followup_Date||'9999';
+        return da.localeCompare(db) || b.Sr-a.Sr;
+      });
+    } else if(sortByPref === 'date_desc'){
+      data.sort((a,b)=>{
+        const da=a.Followup_Date||'', db=b.Followup_Date||'';
+        return db.localeCompare(da) || b.Sr-a.Sr;
+      });
+    } else if(sortByPref === 'name_asc'){
+      data.sort((a,b)=>(a.Name||'').localeCompare(b.Name||''));
+    } else if(sortByPref === 'name_desc'){
+      data.sort((a,b)=>(b.Name||'').localeCompare(a.Name||''));
+    } else if(sortByPref === 'sr_asc'){
+      data.sort((a,b)=>a.Sr-b.Sr);
+    } else {
+      data.sort((a,b)=>b.Sr-a.Sr); // sr_desc — latest first (old default)
+    }
   } else {
     const k=KEYS[sortState.col];
     if(k) data.sort((a,b)=>{
@@ -3097,6 +3178,9 @@ async function startApp(){
 
   // Build all dropdowns from lists
   rebuildDropdowns();
+
+  // Load and apply sort preference
+  applyStoredSortPref();
 
   // Stats toggle init
   if(statsVisible){
