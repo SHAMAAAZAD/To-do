@@ -980,7 +980,11 @@ async function syncPull(force){
       leads = mergeLeads(leads, d.leads);
       comments = mergeComments(comments, d.comments||{});
       // Merge global notes
-      if(d.globalNotes) mergeAndSaveGlobalNotes(d.globalNotes);
+      if(d.globalNotes) {
+        mergeAndSaveGlobalNotes(d.globalNotes);
+        const gnModal = document.getElementById('globalNotesMbg');
+        if(gnModal && gnModal.classList.contains('show')) renderGlobalNotes();
+      }
       // Merge activity
       const remAct = d.activity?.[TODAY]||[];
       applyActivityFromSync(remAct);
@@ -1023,25 +1027,31 @@ function startPoller(){
         const fr = await fetch(FB_BASE+'.json?r='+Date.now(), {cache:'no-store'});
         if(!fr.ok) return;
         const d = await fr.json();
-        if(!d||!d.leads||!d.leads.length) return;
+        if(!d) return;
         // Smart merge — offline wale local changes preserved
-        leads = mergeLeads(leads, d.leads);
-        comments = mergeComments(comments, d.comments||{});
-        // Merge global notes from remote
-        if(d.globalNotes) mergeAndSaveGlobalNotes(d.globalNotes);
+        if(d.leads && d.leads.length){
+          leads = mergeLeads(leads, d.leads);
+          comments = mergeComments(comments, d.comments||{});
+          saveLeads(); saveComments();
+        }
+        // Merge global notes — ALWAYS sync, leads ka wait nahi
+        if(d.globalNotes && d.globalNotes.length){
+          mergeAndSaveGlobalNotes(d.globalNotes);
+          // Agar notes modal open hai to live refresh karo
+          const gnModal = document.getElementById('globalNotesMbg');
+          if(gnModal && gnModal.classList.contains('show')) renderGlobalNotes();
+        }
         // Merge activity from remote
         const remAct = d.activity?.[TODAY]||[];
         applyActivityFromSync(remAct);
         _remoteTs = Number(d.ts||0);
-        saveLeads(); saveComments();
         if(d.settings) _applySettings(d.settings);
         // If remote data already had shift applied, mark local shiftLog too
-        // so autoShift doesn't re-run on this device
         try{
           const sl = JSON.parse(localStorage.getItem(AUTO_SHIFT_KEY)||'{}');
           if(!sl[TODAY]){ sl[TODAY]=true; localStorage.setItem(AUTO_SHIFT_KEY,JSON.stringify(sl)); }
         }catch(e){}
-        refreshAll(); rdash();
+        if(d.leads && d.leads.length){ refreshAll(); rdash(); }
         setSyncDot('ok', leads.length+'✓');
       }
     } catch(e){}
@@ -3701,20 +3711,24 @@ checkSession();
 function loadGlobalNotes(){try{return JSON.parse(localStorage.getItem('crm_global_notes_v1')||'[]');}catch(e){return[];}}
 function saveGlobalNotesList(arr){
   try{localStorage.setItem('crm_global_notes_v1',JSON.stringify(arr));}catch(e){}
-  // Firebase sync
+  // Firebase sync — immediate push so other devices get notes in real-time
   clearTimeout(window._gnPushTimer);
-  window._gnPushTimer = setTimeout(syncPush, 800);
+  window._gnPushTimer = setTimeout(()=>{
+    // Force new ts so poller on other devices detects the change
+    syncPush();
+  }, 400);
 }
 
-// Merge remote global notes with local — keep all unique notes by ts
+// Merge remote global notes with local — remote changes win (edit/delete support)
 function mergeAndSaveGlobalNotes(remote){
-  if(!remote||!remote.length) return;
-  const local=loadGlobalNotes();
-  const map={};
-  local.forEach(n=>{ map[n.ts]=n; });
-  remote.forEach(n=>{ if(!map[n.ts]) map[n.ts]=n; }); // add new ones from remote
-  const merged=Object.values(map).sort((a,b)=>b.ts-a.ts);
-  try{localStorage.setItem('crm_global_notes_v1',JSON.stringify(merged));}catch(e){}
+  if(!remote) return;
+  const local = loadGlobalNotes();
+  // Build map by ts: remote overwrites local (remote = source of truth for edits/deletes)
+  const map = {};
+  local.forEach(n => { if(n.ts) map[n.ts] = n; });
+  remote.forEach(n => { if(n.ts) map[n.ts] = n; }); // remote wins on conflict
+  const merged = Object.values(map).sort((a,b) => b.ts - a.ts);
+  try{ localStorage.setItem('crm_global_notes_v1', JSON.stringify(merged)); }catch(e){}
 }
 
 function openGlobalNotes(){
